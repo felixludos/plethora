@@ -1,0 +1,10 @@
+
+name: plethora
+#name: Plethora Representation Suite
+
+version: 0.1
+license: MIT
+
+py_info: plethora/_info.py
+
+package: plethora
