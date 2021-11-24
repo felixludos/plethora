@@ -18,3 +18,12 @@ class Dimension:
 		return self.din, self.dout
 
 
+
+class Device:
+	def __init__(self, *args, device=None, **kwargs):
+		super().__init__(*args, **kwargs)
+		self.device = device
+
+
+
+
