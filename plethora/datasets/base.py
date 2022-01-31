@@ -1,35 +1,154 @@
 import torch
 
-from omnibelt import unspecified_argument
+from omnibelt import unspecified_argument, duplicate_instance
 
 from ..framework import base
 
-class MissingModeError(Exception):
-	def __init__(self):
-		super().__init__('')
 
-class DataCollection:
+
+class MissingModeError(Exception):
+	pass
+
+
+
+class BufferNotFoundError(Exception):
+	pass
+
+
+
+class TensorBuffer(base.Buffer):
+	def __init__(self, data=None, **kwargs):
+		super().__init__(**kwargs)
+		self.data = None
+		self.set_data(data)
+
+
+	def set_data(self, data=None):
+		self.device = None if data is None else data.device
+		self.data = data
+
+
+	def _to(self, device):
+		self.data = self.data.to(device)
+
+
+	def _load(self):
+		pass
+
+
+	def _get(self, idx, *args, **kwargs):
+		return self.data[idx]
+
+
+	def _update(self, idx, *args, **kwargs):
+		self.data = self.data[idx]
+
+
+
+class ReferencedBuffer(base.Buffer):
+	def __init__(self, ref=None, **kwargs):
+		super().__init__(**kwargs)
+		self.ref = ref
+
+
+	def _load(self, *args, **kwargs):
+		pass
+
+
+	def _get(self, idx, *args, **kwargs):
+		return self._collection.buffers.get(self.ref, {}).get(idx)
+
+
+	def _update(self, idx, *args, **kwargs):
+		pass
+
+
+
+class DataCollection(base.Buffer):
 	sample_format = None
 	
-	def __init__(self, *args, sample_format=unspecified_argument, mode='train', **kwargs):
-		super().__init__(*args, **kwargs)
+	def __init__(self, *, sample_format=unspecified_argument, mode='train',
+	             buffers=None, modes=None,
+	             space=None, **kwargs):
+		super().__init__(space=None, **kwargs)
 		if sample_format is unspecified_argument:
 			sample_format = self.sample_format
 		self.set_sample_format(sample_format)
-		
+
+		if buffers is None:
+			buffers = {}
+		self.buffers = buffers
+
 		self.mode = mode
-		
-		self._buffers = {}
-		self._modes = {mode: self}
-		self._loaded = False
+		if modes is None:
+			modes = {}
+			if mode is not None:
+				modes[mode] = self
+		self._modes = modes
 
 
-	def register_data(self, name, data=None, space=None, buffer=None):
-		if buffer is None:
-			buffer = base.Buffer(data=data, space=space)
-		self._buffers[name] = buffer
-		return self._buffers[name]
-	
+	def register_buffer(self, name, buffer=None, space=unspecified_argument, **kwargs):
+		if not isinstance(buffer, base.Buffer):
+			buffer = TensorBuffer(data=buffer, **kwargs)
+		buffer.set_collection(self)
+		if space is not unspecified_argument:
+			buffer.set_space(space)
+		self.buffers[name] = buffer
+		return self.buffers[name]
+
+
+	def get_space(self, name=None):
+		if name not in self.buffers:
+			raise BufferNotFoundError(name)
+		return self.buffers[name].get_space()
+
+
+	def _load(self, *args, **kwargs):
+		super()._load(*args, **kwargs)
+
+		for name, buffer in self.buffers.items():
+			buffer.load()
+
+
+	def _check_buffer_names(self, *names):
+		missing = []
+		for name in names:
+			if name not in self.buffers:
+				missing.append(name)
+		raise BufferNotFoundError(', '.join(missing))
+
+
+	def _get(self, idx=None, sample_format=None, strict=True):
+		if sample_format is None:
+			sample_format = self.sample_format
+
+		if isinstance(sample_format, str):
+			if strict:
+				self._check_buffer_names(sample_format)
+			return self.buffers.get(sample_format, {}).get(idx)
+		elif isinstance(sample_format, (list, tuple)):
+			if strict:
+				self._check_buffer_names(*sample_format)
+			return [self.buffers.get(name, {}).get(idx) for name in sample_format]
+		elif isinstance(sample_format, set):
+			if strict:
+				self._check_buffer_names(*sample_format)
+			return {name:self.buffers[name].get(idx) for name in sample_format if name in self.buffers}
+		elif isinstance(sample_format, dict):
+			if strict:
+				self._check_buffer_names(*sample_format)
+			batch = {}
+			for name, transforms in sample_format.items():
+				if name in self.buffers:
+					samples = self.buffers[name].get(idx)
+					if transforms is not None and not isinstance(transforms, (list, tuple)):
+						transforms = [transforms]
+					for transform in transforms:
+						samples = transform.transform(samples)
+					batch[name] = samples
+			return batch
+		raise NotImplementedError(f'unknown sample format: {sample_format}')
+
 
 	def set_sample_format(self, sample_format):
 		self.sample_format = sample_format
@@ -49,41 +168,30 @@ class DataCollection:
 		if mode in self._modes:
 			return self._modes[mode]
 		raise MissingModeError
-	
-	
-	def is_loaded(self):
-		return self._loaded
-
-	
-	def _load(self):
-		raise NotImplementedError
-
-	
-	def load(self):
-		if not self.is_loaded():
-			return self._load()
-
-
-	def __iter__(self):
-		self.load()
-		return self
-	
-	
-	def __next__(self):
-		pass
 
 
 	
 class Dataset(DataCollection):
-	def __init__(self, ):
-		
+	def __init__(self, *args, **kwargs):
+		super().__init__(*args, **kwargs)
+		self._waiting_subset = None
+		self._subset_indices = None
+
+	def __iter__(self):
+		self.load()
+		return self
+
+	def __next__(self):
 		pass
-		
-		
+
 	def __len__(self):
 		raise NotImplementedError
 	
-	
+
+	def subset(self, N=None, indices=None, shuffle=False):
+		pass
+
+
 	def get_subset(self, N=None, indices=None, shuffle=False):
 		if N is not None:
 			assert N != 0
@@ -101,7 +209,9 @@ class Dataset(DataCollection):
 		raise NotImplementedError
 	
 	
-	def split(self, ratios):
+	def split(self, *ratios, **named_ratios):
+		assert len(ratios) == 0 or len(named_ratios) == 0, 'cant mix named and unnamed splits'
+
 		raise NotImplementedError
 
 
