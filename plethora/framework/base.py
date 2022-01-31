@@ -69,12 +69,12 @@ class Buffer(BufferTransform, Loadable, Device):
 				self._updated_idx = self._updated_idx[idx]
 
 
-	def _get(self, idx, *args, **kwargs):
+	def _get(self, idx, device=None, **kwargs):
 		raise NotImplementedError
 
-
-	def get(self, idx, *args, **kwargs):
-		sample = self._get(idx, *args, **kwargs)
+	
+	def get(self, idx, device=None, **kwargs):
+		sample = self._get(idx, device=device, **kwargs)
 		return self.transform(sample)
 
 

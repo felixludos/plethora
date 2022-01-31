@@ -67,13 +67,16 @@ class ReferencedBuffer(base.Buffer):
 class DataCollection(base.Buffer):
 	sample_format = None
 	
-	def __init__(self, *, sample_format=unspecified_argument, mode='train',
-	             buffers=None, modes=None,
-	             space=None, **kwargs):
+	def __init__(self, *, sample_format=unspecified_argument, batch_device=unspecified_argument, mode=None,
+	             buffers=None, modes=None, space=None, **kwargs):
 		super().__init__(space=None, **kwargs)
 		if sample_format is unspecified_argument:
 			sample_format = self.sample_format
 		self.set_sample_format(sample_format)
+
+		if batch_device is unspecified_argument:
+			batch_device = None
+		self.batch_device = batch_device
 
 		if buffers is None:
 			buffers = {}
@@ -115,25 +118,29 @@ class DataCollection(base.Buffer):
 		for name in names:
 			if name not in self.buffers:
 				missing.append(name)
-		raise BufferNotFoundError(', '.join(missing))
+		if len(missing):
+			raise BufferNotFoundError(', '.join(missing))
+	
 
-
-	def _get(self, idx=None, sample_format=None, strict=True):
+	def _get(self, idx=None, sample_format=None, device=None, strict=True):
 		if sample_format is None:
 			sample_format = self.sample_format
+		if device is None:
+			device = self.batch_device
 
 		if isinstance(sample_format, str):
 			if strict:
 				self._check_buffer_names(sample_format)
-			return self.buffers.get(sample_format, {}).get(idx)
+			batch = self.buffers[sample_format].get(idx, device=device)
 		elif isinstance(sample_format, (list, tuple)):
 			if strict:
 				self._check_buffer_names(*sample_format)
-			return [self.buffers.get(name, {}).get(idx) for name in sample_format]
+			batch = [self.buffers[name].get(idx, device=device) for name in sample_format]
 		elif isinstance(sample_format, set):
 			if strict:
 				self._check_buffer_names(*sample_format)
-			return {name:self.buffers[name].get(idx) for name in sample_format if name in self.buffers}
+			batch = {name:self.buffers[name].get(idx, device=device)
+			         for name in sample_format if name in self.buffers}
 		elif isinstance(sample_format, dict):
 			if strict:
 				self._check_buffer_names(*sample_format)
@@ -146,8 +153,10 @@ class DataCollection(base.Buffer):
 					for transform in transforms:
 						samples = transform.transform(samples)
 					batch[name] = samples
-			return batch
-		raise NotImplementedError(f'unknown sample format: {sample_format}')
+		else:
+			raise NotImplementedError(f'bad sample format: {sample_format}')
+
+		return batch
 
 
 	def set_sample_format(self, sample_format):
