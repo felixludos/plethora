@@ -1,7 +1,7 @@
-
+import torch
 from omnibelt import unspecified_argument
 
-
+from . import util
 
 
 class Device:
@@ -10,19 +10,28 @@ class Device:
 		self.device = device
 
 
-	def to(self, device, *args, **kwargs):
+	def to(self, device, **kwargs):
 		self.device = device
-		return self._to(device, *args, **kwargs)
+		return self._to(device, **kwargs)
 
 
-	def _to(self, device):
+	def _to(self, device, **kwargs):
 		raise NotImplementedError
 
 
 class Seeded:
 	def __init__(self, gen=None, seed=None, **kwargs):
-		raise NotImplementedError
-		pass
+		super().__init__(**kwargs)
+
+		if seed is None:
+			seed = util.gen_random_seed()
+		self.seed = seed
+
+		if gen is None:
+			gen = torch.Generator()
+			gen.manual_seed(seed)
+		self.gen = gen
+
 
 
 class SharableAttrs:
@@ -45,6 +54,7 @@ class SharableAttrs:
 		return val
 
 
+
 class Loadable(Device):
 	def __init__(self, *args, **kwargs): # TODO: add autoload using __certify__
 		super().__init__(*args, **kwargs)
@@ -64,5 +74,9 @@ class Loadable(Device):
 	def _load(self, *args, **kwargs):
 		raise NotImplementedError
 
+
+
+# class Downloadable: # TODO
+# 	pass
 
 
