@@ -12,25 +12,57 @@ class Device:
 
 	def to(self, device, **kwargs):
 		self.device = device
-		return self._to(device, **kwargs)
+		out = self._to(device, **kwargs)
+		if out is not None:
+			return out
+		return self
 
 
 	def _to(self, device, **kwargs):
 		raise NotImplementedError
 
 
+
+class DeviceContainer(Device):
+	def __init__(self, children={}, **kwargs):
+		super().__init__(**kwargs)
+		self._device_children = set()
+		self.register_children(**children)
+
+
+	def register_children(self, **children):
+		for name, child in children.items():
+			self._device_children.add(name)
+			setattr(self, name, child)
+
+
+	def _to(self, device, **kwargs):
+		children = {}
+		for name in self._device_children:
+			obj = getattr(self, name, None)
+			if obj is not None:
+				children[name] = obj.to(device)
+		self.register_children(**children)
+
+
+
 class Seeded:
 	def __init__(self, gen=None, seed=None, **kwargs):
 		super().__init__(**kwargs)
-
-		if seed is None:
-			seed = util.gen_random_seed()
 		self.seed = seed
-
-		if gen is None:
-			gen = torch.Generator()
-			gen.manual_seed(seed)
 		self.gen = gen
+		if gen is None:
+			self.set_seed(self.seed)
+
+
+	def set_seed(self, seed=None):
+		if seed is None:
+			seed = util.gen_random_seed(self.gen)
+
+		gen = torch.Generator()
+		gen.manual_seed(seed)
+		self.gen = gen
+		return seed
 
 
 

@@ -2,29 +2,28 @@
 
 import torch
 
-from .base import Model
+from .base import Function
 
 
-
-class Encoder(Model):
+class Encoder(Function):
 	def encode(self, observation):
 		return self(observation)
 
 
 
-class Decoder(Model):
+class Decoder(Function):
 	def decode(self, latent):
 		return self(latent)
 
 
 
-class Generator(Model):
+class Generator(Function):
 	def generate(self, N: int):
 		raise NotImplementedError
 
 
 
-class Discriminator(Model):
+class Discriminator(Function):
 	def judge(self, observation):
 		raise NotImplementedError
 
@@ -36,7 +35,7 @@ class Extractor(Encoder):
 
 
 
-class Criterion(Model):
+class Criterion(Function):
 	def compare(self, observation1, observation2):
 		raise NotImplementedError
 
@@ -52,13 +51,13 @@ class Metric(Criterion):
 
 
 
-class Score(Model):
+class Score(Function):
 	def score(self, observation):
 		raise NotImplementedError
 
 
 
-class Interpolator(Model):
+class Interpolator(Function):
 	def interpolate(self, start, end, N):
 		start, end = start.unsqueeze(1), end.unsqueeze(1)
 		progress = torch.linspace(0., 1., steps=N+2, device=start.device).view(1, N+2, *[1] * len(start.shape[2:]))
@@ -66,13 +65,13 @@ class Interpolator(Model):
 
 
 
-class Estimator(Model):
+class Estimator(Function):
 	def predict(self, observation):
 		raise NotImplementedError
 
 
 
-class Quantizer(Model):
+class Quantizer(Function):
 	def quantize(self, observation):
 		raise NotImplementedError
 
@@ -82,7 +81,7 @@ class Quantizer(Model):
 
 
 
-class Compressor(Model):
+class Compressor(Function):
 	def compress(self, observation):
 		raise NotImplementedError
 

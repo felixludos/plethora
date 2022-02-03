@@ -25,8 +25,8 @@ class TensorBuffer(base.FixedBuffer):
 
 
 	def set_data(self, data=None):
-		self.device = None if data is None else data.device
-		self.data = data
+		# self.device = None if data is None else data.device
+		self.register_children(data=data)
 
 
 	def is_loaded(self):
@@ -37,16 +37,12 @@ class TensorBuffer(base.FixedBuffer):
 		return len(self.data)
 
 
-	def _to(self, device):
-		self.data = self.data.to(device)
-
-
 	def _load(self):
 		pass
 
 
-	def _get(self, idx, device=None, **kwargs):
-		sample = self.data[idx]
+	def _get(self, indices=None, device=None, **kwargs):
+		sample = self.data if indices is None else self.data[indices]
 		if device is not None:
 			sample = sample.to(device)
 		return sample
@@ -58,38 +54,31 @@ class TensorBuffer(base.FixedBuffer):
 
 
 
-
-class ReferencedBuffer(base.Buffer):
-	def __init__(self, ref=None, **kwargs):
-		super().__init__(**kwargs)
-		self.ref = ref
-
-
-	def _load(self, *args, **kwargs):
-		pass
+class WrappedBuffer(TensorBuffer):
+	def __init__(self, source=None, indices=None, space=None, data=None, **kwargs):
+		super().__init__(space=None, data=None, **kwargs)
+		self.source, self.indices = None, None
+		self.register_children(source=source, indices=indices)
+		self.set_source(source)
 
 
-	def _get(self, idx, *args, **kwargs):
-		return self._collection.buffers.get(self.ref, {}).get(idx)
+	def unwrap(self, **kwargs):
+		self.set_data(self._get(device=self.device, **kwargs))
+		self.set_space(self.get_space())
+		self.set_source()
 
 
-	def _update(self, idx, *args, **kwargs):
-		pass
+	def merge(self, new_instance=None):
+		raise NotImplementedError
 
 
+	@staticmethod
+	def stack(*datasets): # TODO: append these
+		raise NotImplementedError
 
-class WrappedBuffer(base.Buffer):
-	def __init__(self, source=None, space=None, **kwargs):
-		super().__init__(space=None, **kwargs)
+
+	def set_source(self, source=None):
 		self.source = source
-
-
-	def set_source(self, source):
-		self.source = source
-
-
-	def set_space(self, space):
-		self.space = space
 
 
 	def get_space(self):
@@ -102,12 +91,17 @@ class WrappedBuffer(base.Buffer):
 		pass
 
 
-	def _update(self, idx, *args, **kwargs):
-		pass
+	def _update(self, indices=None, **kwargs):
+		if self.source is None:
+			super()._update(indices=indices, **kwargs)
 
 
-	def _get(self, idx, device=None, **kwargs):
-		return self.source.get(idx, device=device, **kwargs)
+	def _get(self, indices=None, device=None, **kwargs):
+		if self.source is None:
+			return super()._get(indices=indices, device=device, **kwargs)
+		if self.indices is not None:
+			indices = self.indices[indices]
+		return self.source.get(indices=indices, device=device, **kwargs)
 
 
 
@@ -150,9 +144,11 @@ class DataCollection(base.Buffer):
 		self.buffers[name] = buffer
 		return self.buffers[name]
 
+
 	def _remove_buffer(self, name):
 		if self.has_buffer(name):
 			del self.buffers[name]
+
 
 	def rename_buffer(self, current, new=None):
 		buffer = self.get_buffer(current)
@@ -190,7 +186,17 @@ class DataCollection(base.Buffer):
 		return name in self.buffers
 
 
-	def _get(self, idx=None, sample_format=None, device=None, strict=True):
+	def _process_sample(self, sample, *, sample_format, device, **kwargs):
+		return sample
+		if isinstance(sample_format, (list, tuple)):
+			return base.BatchList(*sample, device=device)
+		elif isinstance(sample_format, (set, dict)):
+			return base.BatchDict(device=device, **sample)
+		else:
+			return sample
+
+
+	def _get(self, idx=None, sample_format=None, device=None, strict=True, **kwargs):
 		if sample_format is None:
 			sample_format = self.sample_format
 		if device is None:
@@ -199,32 +205,32 @@ class DataCollection(base.Buffer):
 		if isinstance(sample_format, str):
 			if strict:
 				self._check_buffer_names(sample_format)
-			batch = self.buffers[sample_format].get(idx, device=device)
+			sample = self.buffers[sample_format].get(idx, device=device)
 		elif isinstance(sample_format, (list, tuple)):
 			if strict:
 				self._check_buffer_names(*sample_format)
-			batch = [self.buffers[name].get(idx, device=device) for name in sample_format]
+			sample = [self.buffers[name].get(idx, device=device) for name in sample_format]
 		elif isinstance(sample_format, set):
 			if strict:
 				self._check_buffer_names(*sample_format)
-			batch = {name:self.buffers[name].get(idx, device=device)
+			sample = {name:self.buffers[name].get(idx, device=device)
 			         for name in sample_format if name in self.buffers}
 		elif isinstance(sample_format, dict):
 			if strict:
 				self._check_buffer_names(*sample_format)
-			batch = {}
+			sample = {}
 			for name, transforms in sample_format.items():
 				if name in self.buffers:
-					samples = self.buffers[name].get(idx)
+					samples = self.buffers[name].get(idx, device=device)
 					if transforms is not None and not isinstance(transforms, (list, tuple)):
 						transforms = [transforms]
 					for transform in transforms:
 						samples = transform.transform(samples)
-					batch[name] = samples
+					sample[name] = samples
 		else:
 			raise NotImplementedError(f'bad sample format: {sample_format}')
 
-		return batch
+		return self._process_sample(sample, sample_format=sample_format, device=device, **kwargs)
 
 
 	def set_sample_format(self, sample_format):
@@ -233,6 +239,10 @@ class DataCollection(base.Buffer):
 
 	def get_sample_format(self):
 		return self.sample_format
+
+
+	def selection_iterator(self):
+		raise NotImplementedError
 
 
 	def batch(self, N=None):
@@ -258,14 +268,23 @@ class DataCollection(base.Buffer):
 
 	
 class Dataset(DataCollection, base.FixedBuffer):
-	def __init__(self, batch_size=64, shuffle_batches=True, **kwargs):
+	def __init__(self, batch_size=64, shuffle_batches=True, drop_last=None,
+	             batch_device=None, infinite=False, **kwargs):
 		super().__init__(**kwargs)
 
 		self._batch_size = batch_size
+		self._drop_last = drop_last
 		self._shuffle_batches = shuffle_batches
+		self._batch_device = batch_device
+		self._infinite = infinite
 
 		self._waiting_subset = None
 		self._subset_indices = None
+
+
+	@property
+	def batch_size(self):
+		return self._batch_size
 
 
 	@staticmethod
@@ -286,6 +305,11 @@ class Dataset(DataCollection, base.FixedBuffer):
 		# TODO: include a warning if cls._is_big_number(N)
 		return torch.randint(N, size=(N,), generator=generator) \
 			if cls._is_big_number(N) else torch.randperm(N, generator=generator)
+
+
+	def selection_iterator(self, batch_size=None, shuffle=False, drop_last=None):
+		order = self.shuffle_indices(len(self), generator=self.gen) if shuffle else torch.arange(len(self))
+		return order.split(self.batch_size)
 
 
 	@staticmethod
@@ -320,16 +344,33 @@ class Dataset(DataCollection, base.FixedBuffer):
 		return new
 
 
+	def get_iterator(self, sample_format=unspecified_argument, device=unspecified_argument, sample_kwargs={},
+	                 infinite=None, drop_last=None,
+	                 batch_size=None, shuffle=None, **kwargs):
+		if sample_format is unspecified_argument:
+			sample_format = self.sample_format
+		if device is unspecified_argument:
+			device = self.batch_device
+		if infinite is None:
+			infinite = self._infinite
+		if drop_last is None:
+			drop_last = self._drop_last
+		if batch_size is None:
+			batch_size = self.batch_size
+		if shuffle is None:
+			shuffle = self._shuffle_batches
+		return _DatasetIterator(self, infinite=infinite, drop_last=drop_last,
+		                        sample_format=sample_format, device=device, sample_kwargs=sample_kwargs,
+		                        batch_size=batch_size, shuffle=shuffle,
+		                        **kwargs)
+
+
 	def __iter__(self):
-		raise NotImplementedError
-
-
-	def __next__(self):
-		raise NotImplementedError
+		return self.get_iterator()
 
 
 	def _count(self):
-		len(next(iter(self.buffers.values())))
+		return len(next(iter(self.buffers.values())))
 	
 	
 	def split(self, splits, shuffle=False, register_modes=True):
@@ -400,27 +441,87 @@ class DataGenerator(DataCollection): # TODO: batches are specified by number of 
 	pass
 
 
+
 class _DatasetIterator: # TODO: pbar integration
-	def __init__(self, dataset, generator=None, seed=None, **kwargs):
+	def __init__(self, dataset, infinite=False, drop_last=False,
+	             sample_format=None, device=None, sample_kwargs={},
+	             batch_size=None, shuffle=True,
+	             **kwargs):
 		super().__init__(**kwargs)
+		self._dataset = dataset
+
+		self._device = device
+		self._sample_format = sample_format
+		self._sample_kwargs = sample_kwargs
+
+		self._batch_size = batch_size
+		self._infinite = infinite
+		self._drop_last = drop_last
+		self._shuffle = shuffle
+
+		self._selections = self.generate_selections()
 
 
+	def generate_selections(self):
+		selections = self._dataset.selection_iterator(batch_size=self._batch_size, shuffle=self._shuffle)
+		if self._drop_last and len(selections) > 1 and len(selections[-1]) != len(selections[0]):
+			selections.pop()
+		self._epoch_len = len(selections)
+		selections = list(reversed(selections))
+		return selections
 
-		pass
+
+	def __iter__(self):
+		return self
+
+
+	def __len__(self):
+		return self._epoch_len
+
+
+	def remaining(self):
+		return len(self._selections)
+
+
+	def __next__(self):
+		if len(self._selections) == 0:
+			if not self._infinite:
+				raise StopIteration
+			self._selections = self.generate_selections()
+		sel = self._selections.pop()
+		return self._dataset.get(sel, device=self._device, sample_format=self._sample_format,
+		                         **self._sample_kwargs)
+
 
 
 class _DatagenIterator:
-	pass
+	def __init__(self):
+		raise NotImplementedError
 
 
 
 class ObservationDataset(Dataset):
+
+	@property
+	def din(self):
+		return self.get_observation_space()
+
+
 	def get_observation_space(self):
 		return self.get_space('observation')
 
 
-	def get_observation(self, idx=None, **kwargs):
-		return self.get(idx=idx, sample_format='observation', **kwargs)
+	def get_observation(self, indices=None, **kwargs):
+		return self.get(indices=indices, sample_format='observation', **kwargs)
+
+
+	def _load(self, *args, **kwargs):
+		super()._load()
+		if not self.has_buffer('observation'):
+			# TODO: warning: guessing observation buffer
+			assert len(self.buffers), 'cant find a buffer for the observations (did you forget to register it?)'
+			key = list(self.buffers.keys())[-1]
+			self.register_buffer('observation', self._wrap_buffer(self.get_buffer(key)))
 
 
 	def __len__(self):
@@ -429,11 +530,25 @@ class ObservationDataset(Dataset):
 
 
 class SupervisedDataset(ObservationDataset):
+	@property
+	def dout(self):
+		return self.get_target_space()
+
+
 	def get_target_space(self):
 		return self.get_space('target')
 
-	def get_observation(self, idx=None, **kwargs):
-		return self.get(idx=idx, sample_format='target', **kwargs)
+
+	def get_target(self, indices=None, **kwargs):
+		return self.get(indices=indices, sample_format='target', **kwargs)
+
+
+	def _load(self, *args, **kwargs):
+		super()._load()
+		if not self.has_buffer('target'):
+			# TODO: warning: guessing target buffer
+			key = list(self.buffers.keys())[0 if len(self.buffers) < 2 else -2]
+			self.register_buffer('target', self._wrap_buffer(self.get_buffer(key)))
 
 
 
@@ -442,38 +557,84 @@ class LabeledDataset(SupervisedDataset):
 		return self.get_space('label')
 
 
+	def get_label(self, indices=None, **kwargs):
+		return self.get(indices=indices, sample_format='label', **kwargs)
 
-class DisentanglementDataset(LabeledDataset):
+
+	def _load(self, *args, **kwargs):
+		if not self.has_buffer('target') and self.has_buffer('label'):
+			self.register_buffer('target', self._wrap_buffer(self.get_buffer('label')))
+		super()._load()
+		if not self.has_buffer('label'):
+			# TODO: warning: guessing target buffer
+			key = list(self.buffers.keys())[0 if len(self.buffers) < 3 else -3]
+			self.register_buffer('label', self._wrap_buffer(self.get_buffer(key)))
+# Labeled means there exists a deterministic mapping from labels to observations
+# (not including possible subsequent additive noise)
+
+
+
+class SyntheticDataset(LabeledDataset):
+	def __init__(self, distinct_mechanisms=False, standardize_scale=True, **kwargs):
+		super().__init__(**kwargs)
+		self._distinct_mechanisms = distinct_mechanisms
+		self._standardize_scale = standardize_scale
+
+
 	def get_mechanism_space(self):
-		raise NotImplementedError
+		return self.get_space('mechanism') if self._distinct_mechanisms else self.get_label_space()
+
+
+	def _load(self, *args, **kwargs):
+		if not self._distinct_mechanisms and not self.has_buffer('label') and self.has_buffer('mechanism'):
+			self.register_buffer('label', self._wrap_buffer(self.get_buffer('mechanism')))
+		super()._load()
+		if not self.has_buffer('mechanism'):
+			# TODO: warning: guessing target buffer
+			key = list(self.buffers.keys())[0 if len(self.buffers) < 4 else -4] \
+				if self._distinct_mechanisms else 'label'
+			self.register_buffer('mechanism', self._wrap_buffer(self.get_buffer(key)))
 
 
 	def transform_to_mechanisms(self, data):
+		if not self._distinct_mechanisms:
+			return data
 		return self.get_mechanism_space().transform(data, self.get_label_space())
 
 
 	def transform_to_labels(self, data):
+		if not self._distinct_mechanisms:
+			return data
 		return self.get_label_space().transform(data, self.get_mechanism_space())
 
 
-	def get_observations_from_labels(self, labels):
-		raise NotImplementedError
-
-
-	def difference(self, a, b, standardize=None):
+	def difference(self, a, b, standardize=None): # TODO: link to metric space
 		if standardize is None:
 			standardize = self._standardize_scale
-		if not self.uses_mechanisms():
-			a, b = self.transform_to_mechanisms(a), self.transform_to_mechanisms(b)
-		return self.get_mechanism_space().difference(a,b, standardize=standardize)
+		return self.get_mechanism_space().difference(a, b, standardize=standardize)
 
 
-	def distance(self, a, b, standardize=None):
+	def distance(self, a, b, standardize=None):  # TODO: link to metric space
 		if standardize is None:
 			standardize = self._standardize_scale
-		if not self.uses_mechanisms():
-			a, b = self.transform_to_mechanisms(a), self.transform_to_mechanisms(b)
 		return self.get_mechanism_space().distance(a,b, standardize=standardize)
+
+
+	def generate_mechanism(self, N, seed=None, gen=None): # TODO: link with prior
+		if seed is not None:
+			gen = torch.Generator().manual_seed(seed)
+		if gen is None:
+			gen = self.gen
+		return self.get_mechanism_space().sample(N, gen=gen)
+
+
+	def generate_observation_from_mechanism(self, mechanism, seed=None, gen=None):
+		raise NotImplementedError
+	# TODO: link with generative model
+# Synthetic means the mapping is known (and available, usually only for evaluation)
+# TODO: separate labels and mechanisms
+
+
 
 
 

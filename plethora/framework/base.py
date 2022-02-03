@@ -1,7 +1,7 @@
 
 from omnibelt import unspecified_argument, duplicate_instance
 
-from .features import Device, Loadable, Seeded
+from .features import Device, DeviceContainer, Loadable, Seeded
 
 
 
@@ -18,7 +18,8 @@ class NotLoadedError(Exception):
 		super().__init__(f'{buffer}')
 
 
-class Buffer(BufferTransform, Loadable, Device, Seeded):
+
+class Buffer(BufferTransform, Loadable, DeviceContainer, Seeded):
 	space = None
 	
 	def __init__(self, space=unspecified_argument, **kwargs):
@@ -79,15 +80,18 @@ class Buffer(BufferTransform, Loadable, Device, Seeded):
 
 
 
-
 class FixedBuffer(Buffer): # fixed number of samples (possibly not known until after loading)
 
-	def _get(self, idx=None, device=None, **kwargs):
+	def _get(self, indices=None, device=None, **kwargs):
+		return super()._get(sel=indices, device=device, **kwargs)
+
+
+	def get(self, indices=None, device=None, **kwargs):
+		return super().get(sel=indices, device=device, **kwargs)
+
+
+	def _update(self, indices=None, **kwargs):
 		raise NotImplementedError
-
-
-	def get(self, idx=None, device=None, **kwargs):
-		return super().get(sel=idx, device=device, **kwargs)
 
 
 	def _store_update(self, indices=None, **kwargs):
@@ -135,8 +139,8 @@ class FixedBuffer(Buffer): # fixed number of samples (possibly not known until a
 		return self.count()
 
 
-	def __getitem__(self, idx):
-		return self.get(idx)
+	def __getitem__(self, item):
+		return self.get(item)
 
 
 
@@ -161,6 +165,47 @@ class Function(Device):
 		return self.din, self.dout
 	
 
+
+class Batch(Device):
+	def _item_iterator(self):
+		raise NotImplementedError
+
+
+	def _update_payload(self, updates):
+		for key, content in updates.items():
+			self[key] = content
+
+
+	def _to(self, device, **kwargs):
+		updates = {key: content.to(device) for key, content in self._item_iterator()}
+		self._update_payload(updates)
+
+
+	def __str__(self):
+		return f'{self.__class__.__name__}({self._str_info()})'
+
+
+
+class BatchList(Batch, list):
+	def _str_info(self):
+		num = len(self)
+		msg = 'item' if num == 1 else 'items'
+		return f'{num} {msg}'
+
+
+	def _item_iterator(self):
+		return enumerate(self)
+
+
+
+class BatchDict(Batch, dict):
+	def _str_info(self):
+		msg = ', '.join(self.keys())
+		return msg
+
+
+	def _item_iterator(self):
+		return self.items()
 
 
 
