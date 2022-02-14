@@ -10,11 +10,11 @@ from ..framework.util import spaces
 
 class SwissRollDataset(SyntheticDataset):
 	def __init__(self, n_samples=100, noise=0., target_theta=True,
-	             Ax=np.pi, Ay=21., Az=np.pi, freq=0.5, tmin=3., tmax=9.,
+	             Ax=np.pi/2, Ay=21., Az=np.pi/2, freq=0.5, tmin=3., tmax=9.,
 	             **kwargs):
-		super().__init__(**kwargs)
+		super().__init__(default_len=n_samples, **kwargs)
 
-		self.n_samples = n_samples
+		# self.n_samples = n_samples
 		self.noise_std = noise
 
 		assert Ax > 0 and Ay > 0 and Az > 0 and freq > 0 and tmax > tmin, f'invalid parameters: ' \
@@ -56,18 +56,18 @@ class SwissRollDataset(SyntheticDataset):
 		height = mechanism.narrow(-1,1,1)
 
 		pts = torch.cat([
-			self.Ax * theta * theta.mul(self.freq).cos(),
+			self.Ax * theta * theta.mul(self.freq*np.pi).cos(),
 			self.Ay * height,
-			self.Az * theta * theta.mul(self.freq).sin(),
+			self.Az * theta * theta.mul(self.freq*np.pi).sin(),
 		], -1) + self._generate_noise(len(theta), seed=seed, gen=gen)
 		return pts
 
 
 	def _load(self, *args, **kwargs):
-		lbls = self.generate_mechanism(self.n_samples)
+		lbls = self.generate_mechanism(len(self))
 
 		self.buffers['label'].set_data(lbls)
-		self.buffers['observation'].set_data(self._generate_observation(lbls))
+		self.buffers['observation'].set_data(self.generate_observation_from_mechanism(lbls))
 		if self._target_theta:
 			self.buffers['target'].set_data(lbls.narrow(-1,0,1))
 

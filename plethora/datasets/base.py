@@ -131,6 +131,14 @@ class DataCollection(base.Buffer):
 		self._modes = modes
 
 
+	def __str__(self):
+		return f'{self.__class__.__name__}'
+
+
+	def __repr__(self):
+		return str(self)
+
+
 	@staticmethod
 	def _default_buffer_factory(name, **kwargs):
 		raise NotImplementedError
@@ -281,6 +289,9 @@ class Dataset(DataCollection, base.FixedBuffer):
 		self._waiting_subset = None
 		self._subset_indices = None
 
+	def __str__(self):
+		return f'{self.__class__.__name__}<{self.mode}>[{len(self)}]'
+
 
 	@property
 	def batch_size(self):
@@ -337,6 +348,7 @@ class Dataset(DataCollection, base.FixedBuffer):
 			indices = self._split_indices(indices=self.shuffle_indices(len(self), generator=self.gen)
 										  if shuffle else torch.arange(len(self)), cut=cut)
 		new = self.copy()
+		new._default_len = len(indices)
 		for name, buffer in self.buffers.items():
 			new.register_buffer(name, self._wrap_buffer(buffer, indices))
 		if self.mode is not None:
@@ -524,8 +536,8 @@ class ObservationDataset(Dataset):
 			self.register_buffer('observation', self._wrap_buffer(self.get_buffer(key)))
 
 
-	def __len__(self):
-		return len(self.get_buffer('observation'))
+	# def __len__(self):
+	# 	return len(self.get_buffer('observation'))
 
 
 

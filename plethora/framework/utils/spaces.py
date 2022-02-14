@@ -1,4 +1,3 @@
-import torch
 from omnibelt import unspecified_argument
 import omnifig as fig
 
@@ -42,17 +41,10 @@ class DimSpec:
 	@property
 	def shape(self):
 		return self._shape
-
-	@property
-	def expanded_shape(self):
-		return self.shape
-
+	
 	def __len__(self):  # compressed shape
 		return math.prod(self.shape)
-
-	def expanded_len(self):
-		return math.prod(self.expanded_shape)
-
+	
 	def sample(self, N=None, gen=None, seed=None):  # samples compressed
 		raise NotImplementedError
 	
@@ -119,10 +111,7 @@ class HalfBoundDim(DenseDim):
 				min = bound
 			else:
 				max = bound
-		if min is not None:
-			min = torch.as_tensor(min)
-		if max is not None:
-			max = torch.as_tensor(max)
+		
 		assert max is None or min is None, f'Too many bounds specified: min={min}, max={max}'
 		assert bound_type in {'exp', 'soft', 'chi', 'abs'}
 		if bound_type in {'chi', 'abs'}:
@@ -172,7 +161,7 @@ class HalfBoundDim(DenseDim):
 
 class BoundDim(DenseDim):
 	def __init__(self, min=0., max=1., epsilon=1e-10, **kwargs):
-		super().__init__(min=torch.as_tensor(min), max=torch.as_tensor(max), **kwargs)
+		super().__init__(min=min, max=max, **kwargs)
 		assert self.min is not None, f'No lower bound provided'
 		assert self.max is not None, f'No upper bound provided'
 		
@@ -331,10 +320,6 @@ class ImageSpace(SpatialSpace):
 		self.width = width
 
 
-class PixelSpace(BoundDim, ImageSpace):
-	pass
-
-
 class VolumeSpace(SpatialSpace):
 	def __init__(self, channels=1, height=None, width=None, depth=None, **kwargs):
 		super().__init__(channels=channels, size=(height, width, depth), **kwargs)
@@ -482,77 +467,77 @@ class JointSpace(DimSpec):
 		return self.dims[item]
 
 
-# class DimSpecC(Configurable, DimSpec):
-# 	def __init__(self, A, min=unspecified_argument, max=unspecified_argument,
-# 	             shape=unspecified_argument, **kwargs):
-#
-# 		if min is unspecified_argument:
-# 			min = A.pull('min', None)
-# 		if max is unspecified_argument:
-# 			max = A.pull('max', None)
-#
-# 		if shape is unspecified_argument:
-# 			shape = A.pull('shape', (1,))
-#
-# 		super().__init__(A, min=min, max=max, shape=shape, **kwargs)
+class DimSpecC(Configurable, DimSpec):
+	def __init__(self, A, min=unspecified_argument, max=unspecified_argument,
+	             shape=unspecified_argument, **kwargs):
+		
+		if min is unspecified_argument:
+			min = A.pull('min', None)
+		if max is unspecified_argument:
+			max = A.pull('max', None)
+		
+		if shape is unspecified_argument:
+			shape = A.pull('shape', (1,))
+		
+		super().__init__(A, min=min, max=max, shape=shape, **kwargs)
 
 
-# @fig.Component('space/half-bound')
-# class HalfBoundDimC(DimSpecC, HalfBoundDim):
-# 	def __init__(self, A, bound=unspecified_argument, side=unspecified_argument,
-# 	             bound_type=unspecified_argument, epsilon=unspecified_argument, **kwargs):
-#
-# 		if bound is unspecified_argument:
-# 			bound = A.pull('bound', 0.)
-# 		if side is unspecified_argument:
-# 			side = A.pull('side', 'lower')
-# 		if bound_type is unspecified_argument:
-# 			bound_type = A.pull('sample-type', 'exp')
-# 		if epsilon is unspecified_argument:
-# 			epsilon = A.pull('epsilon', 1e-10)
-#
-# 		super().__init__(A, bound=bound, side=side,
-# 		                 bound_type=bound_type, epsilon=epsilon, **kwargs)
+@fig.Component('space/half-bound')
+class HalfBoundDimC(DimSpecC, HalfBoundDim):
+	def __init__(self, A, bound=unspecified_argument, side=unspecified_argument,
+	             bound_type=unspecified_argument, epsilon=unspecified_argument, **kwargs):
+		
+		if bound is unspecified_argument:
+			bound = A.pull('bound', 0.)
+		if side is unspecified_argument:
+			side = A.pull('side', 'lower')
+		if bound_type is unspecified_argument:
+			bound_type = A.pull('sample-type', 'exp')
+		if epsilon is unspecified_argument:
+			epsilon = A.pull('epsilon', 1e-10)
+		
+		super().__init__(A, bound=bound, side=side,
+		                 bound_type=bound_type, epsilon=epsilon, **kwargs)
 
 
-# @fig.Component('space/bound')
-# class BoundDimC(DimSpecC, BoundDim):
-# 	def __init__(self, A, epsilon=unspecified_argument, **kwargs):
-# 		if epsilon is unspecified_argument:
-# 			epsilon = A.pull('epsilon', 1e-10)
-# 		super().__init__(A, epsilon=epsilon, **kwargs)
+@fig.Component('space/bound')
+class BoundDimC(DimSpecC, BoundDim):
+	def __init__(self, A, epsilon=unspecified_argument, **kwargs):
+		if epsilon is unspecified_argument:
+			epsilon = A.pull('epsilon', 1e-10)
+		super().__init__(A, epsilon=epsilon, **kwargs)
 
 
-# @fig.Component('space/unbound')
-# class UnboundDimC(DimSpecC, UnboundDim):
-# 	pass
+@fig.Component('space/unbound')
+class UnboundDimC(DimSpecC, UnboundDim):
+	pass
 
 
-# @fig.Component('space/periodic')
-# class PeriodicDimC(DimSpecC, PeriodicDim):
-# 	def __init__(self, A, period=unspecified_argument, **kwargs):
-# 		if period is unspecified_argument:
-# 			period = A.pull('period', 1.)
-#
-# 		super().__init__(A, period=period, **kwargs)
+@fig.Component('space/periodic')
+class PeriodicDimC(DimSpecC, PeriodicDim):
+	def __init__(self, A, period=unspecified_argument, **kwargs):
+		if period is unspecified_argument:
+			period = A.pull('period', 1.)
+		
+		super().__init__(A, period=period, **kwargs)
 
 
-# @fig.Component('space/categorical')
-# class CategoricalDimC(DimSpecC, CategoricalDim):
-# 	def __init__(self, A, n=unspecified_argument, **kwargs):
-# 		if n is unspecified_argument:
-# 			n = A.pull('n')
-#
-# 		super().__init__(A, n=n, **kwargs)
+@fig.Component('space/categorical')
+class CategoricalDimC(DimSpecC, CategoricalDim):
+	def __init__(self, A, n=unspecified_argument, **kwargs):
+		if n is unspecified_argument:
+			n = A.pull('n')
+		
+		super().__init__(A, n=n, **kwargs)
 
 
-# @fig.Component('space/joint')
-# class JointSpaceC(DimSpecC, JointSpace):
-# 	def __init__(self, A, dims=unspecified_argument, **kwargs):
-# 		if dims is unspecified_argument:
-# 			dims = A.pull('dims')
-# 		
-# 		super().__init__(A, _req_args=dims)
+@fig.Component('space/joint')
+class JointSpaceC(DimSpecC, JointSpace):
+	def __init__(self, A, dims=unspecified_argument, **kwargs):
+		if dims is unspecified_argument:
+			dims = A.pull('dims')
+		
+		super().__init__(A, _req_args=dims)
 
 
 

@@ -100,6 +100,7 @@ class Loadable(Device):
 	def load(self, *args, **kwargs):
 		if not self.is_loaded():
 			self._load(*args, **kwargs)
+			self._loaded = True
 		return self
 
 

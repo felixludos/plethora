@@ -22,12 +22,13 @@ class NotLoadedError(Exception):
 class Buffer(BufferTransform, Loadable, DeviceContainer, Seeded):
 	space = None
 	
-	def __init__(self, space=unspecified_argument, **kwargs):
+	def __init__(self, space=unspecified_argument, default_len=None, **kwargs):
 		super().__init__(**kwargs)
 		if space is unspecified_argument:
 			space = self.space
 		self.space = space
 		self._waiting_update = None
+		self._default_len = default_len
 
 
 	def copy(self):
@@ -120,7 +121,7 @@ class FixedBuffer(Buffer): # fixed number of samples (possibly not known until a
 				self._load(**kwargs)
 			else:
 				self._waiting_update = None
-			return super().load(**kwargs)
+		return super().load(**kwargs)
 
 
 	def _count(self):
@@ -132,6 +133,8 @@ class FixedBuffer(Buffer): # fixed number of samples (possibly not known until a
 			return self._count()
 		if self._waiting_update is not None:
 			return len(self._waiting_update)
+		if self._default_len is not None:
+			return self._default_len
 		raise NotLoadedError(self)
 
 
