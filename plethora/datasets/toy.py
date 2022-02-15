@@ -6,8 +6,6 @@ from .base import Dataset, SyntheticDataset
 from ..framework.util import spaces
 
 
-
-
 class SwissRollDataset(SyntheticDataset):
 	def __init__(self, n_samples=100, noise=0., target_theta=True,
 	             Ax=np.pi/2, Ay=21., Az=np.pi/2, freq=0.5, tmin=3., tmax=9.,
@@ -29,7 +27,6 @@ class SwissRollDataset(SyntheticDataset):
 			spaces.BoundDim(min=tmin, max=tmax),
 			spaces.BoundDim(min=0., max=1.),
 		)
-		# by default, labels are sampled by generating sampling from the label space
 
 		obs_space = spaces.JointSpace(
 			spaces.BoundDim(min=-Ax * tmax, max=Ax * tmax),
@@ -72,6 +69,68 @@ class SwissRollDataset(SyntheticDataset):
 			self.buffers['target'].set_data(lbls.narrow(-1,0,1))
 
 		super()._load(*args, **kwargs)
+
+
+
+class HelixDataset(SyntheticDataset):
+	def __init__(self, n_samples=100, n_helix=2, noise=0.,
+	             target_strand=False, periodic_strand=False,
+	             Rx=1., Ry=1., Rz=1., w=1.,
+	             **kwargs):
+		super().__init__(default_len=n_samples, **kwargs)
+
+		self.n_helix = n_helix
+		self.noise_std = noise
+		self._target_strand = target_strand
+
+		self.Rx, self.Ry, self.Rz = Rx, Ry, Rz
+		self.w = int(w) if periodic_strand else w
+
+		lbl_space = spaces.JointSpace(
+			spaces.PeriodicDim(min=-1., max=1.) if periodic_strand else spaces.BoundDim(min=-1., max=1.),
+			spaces.CategoricalDim(n=n_helix),
+		)
+
+		obs_space = spaces.JointSpace(
+			spaces.BoundDim(min=-Rx, max=Rx),
+			spaces.BoundDim(min=-Ry, max=Ry),
+			spaces.BoundDim(min=-Rz, max=Rz),
+		)
+
+		self.register_buffer('label', space=lbl_space)
+		if self._target_strand:
+			self.register_buffer('target', space=lbl_space[-1])
+		self.register_buffer('observation', space=obs_space)
+
+
+	def _generate_noise(self, N, seed=None, gen=None):
+		if seed is not None:
+			gen = torch.Generator().manual_seed(seed)
+		if gen is None:
+			gen = self.gen
+		return self.noise_std * torch.randn(N, 3, generator=gen)
+
+
+	def generate_observation_from_mechanism(self, mechanism, seed=None, gen=None):
+		z = mechanism.narrow(-1, 0, 1)
+		n = mechanism.narrow(-1, 1, 1)
+		theta = z.mul(self.w).add(n.div(self.n_helix) * 2).mul(np.pi)
+
+		amp = torch.as_tensor([self.Rx, self.Ry, self.Rz]).float().to(n.device)
+		pts = amp.unsqueeze(0) * torch.cat([theta.cos(), theta.sin(), z], -1)
+		return pts + self._generate_noise(len(theta), seed=seed, gen=gen)
+
+
+	def _load(self, *args, **kwargs):
+		lbls = self.generate_mechanism(len(self))
+
+		self.buffers['label'].set_data(lbls)
+		self.buffers['observation'].set_data(self.generate_observation_from_mechanism(lbls))
+		if self._target_strand:
+			self.buffers['target'].set_data(lbls.narrow(-1, 0, 1))
+
+		super()._load(*args, **kwargs)
+
 
 
 

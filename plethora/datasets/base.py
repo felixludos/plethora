@@ -61,11 +61,24 @@ class WrappedBuffer(TensorBuffer):
 		self.register_children(source=source, indices=indices)
 		self.set_source(source)
 
+	def is_loaded(self):
+		return (self.source is not None and self.source.is_loaded()) or (self.source is None and super().is_loaded())
+
+	def _count(self):
+		if self.indices is None:
+			return (self.source is not None and len(self.source)) or (self.source is None and super()._count())
+		return len(self.indices)
+
 
 	def unwrap(self, **kwargs):
-		self.set_data(self._get(device=self.device, **kwargs))
-		self.set_space(self.get_space())
-		self.set_source()
+		if self.is_loaded() and self.source is not None:
+			self.set_data(self._get(self.indices, device=self.device, **kwargs))
+			self.indices = None
+			self.set_space(self.get_space())
+			self._loaded = self.source._loaded
+			self.set_source()
+			return
+		raise base.NotLoadedError(self)
 
 
 	def merge(self, new_instance=None):
@@ -93,15 +106,15 @@ class WrappedBuffer(TensorBuffer):
 
 	def _update(self, indices=None, **kwargs):
 		if self.source is None:
-			super()._update(indices=indices, **kwargs)
+			super()._update(indices, **kwargs)
 
 
 	def _get(self, indices=None, device=None, **kwargs):
 		if self.source is None:
-			return super()._get(indices=indices, device=device, **kwargs)
+			return super()._get(indices, device=device, **kwargs)
 		if self.indices is not None:
-			indices = self.indices[indices]
-		return self.source.get(indices=indices, device=device, **kwargs)
+			indices = self.indices if indices is None else self.indices[indices]
+		return self.source.get(indices, device=device, **kwargs)
 
 
 
@@ -137,6 +150,13 @@ class DataCollection(base.Buffer):
 
 	def __repr__(self):
 		return str(self)
+
+
+	def copy(self):
+		new = super().copy()
+		new.buffers = new.buffers.copy()
+		new._modes = new._modes.copy()
+		return new
 
 
 	@staticmethod
@@ -197,14 +217,14 @@ class DataCollection(base.Buffer):
 	def _process_sample(self, sample, *, sample_format, device, **kwargs):
 		return sample
 		if isinstance(sample_format, (list, tuple)):
-			return base.BatchList(*sample, device=device)
+			return base.TensorList(*sample, device=device)
 		elif isinstance(sample_format, (set, dict)):
-			return base.BatchDict(device=device, **sample)
+			return base.TensorDict(device=device, **sample)
 		else:
 			return sample
 
 
-	def _get(self, idx=None, sample_format=None, device=None, strict=True, **kwargs):
+	def _get(self, sel=None, sample_format=None, device=None, strict=True, **kwargs):
 		if sample_format is None:
 			sample_format = self.sample_format
 		if device is None:
@@ -213,15 +233,15 @@ class DataCollection(base.Buffer):
 		if isinstance(sample_format, str):
 			if strict:
 				self._check_buffer_names(sample_format)
-			sample = self.buffers[sample_format].get(idx, device=device)
+			sample = self.buffers[sample_format].get(sel, device=device)
 		elif isinstance(sample_format, (list, tuple)):
 			if strict:
 				self._check_buffer_names(*sample_format)
-			sample = [self.buffers[name].get(idx, device=device) for name in sample_format]
+			sample = [self.buffers[name].get(sel, device=device) for name in sample_format]
 		elif isinstance(sample_format, set):
 			if strict:
 				self._check_buffer_names(*sample_format)
-			sample = {name:self.buffers[name].get(idx, device=device)
+			sample = {name:self.buffers[name].get(sel, device=device)
 			         for name in sample_format if name in self.buffers}
 		elif isinstance(sample_format, dict):
 			if strict:
@@ -229,7 +249,7 @@ class DataCollection(base.Buffer):
 			sample = {}
 			for name, transforms in sample_format.items():
 				if name in self.buffers:
-					samples = self.buffers[name].get(idx, device=device)
+					samples = self.buffers[name].get(sel, device=device)
 					if transforms is not None and not isinstance(transforms, (list, tuple)):
 						transforms = [transforms]
 					for transform in transforms:
@@ -258,6 +278,8 @@ class DataCollection(base.Buffer):
 
 
 	def register_modes(self, **modes):
+		for name, mode in modes.items():
+			mode._mode = name
 		self._modes.update(modes)
 
 
@@ -309,18 +331,27 @@ class Dataset(DataCollection, base.FixedBuffer):
 
 
 	@classmethod
-	def shuffle_indices(cls, N, seed=None, generator=None):
-		if seed is not None and generator is None:
-			generator = torch.Generator()
-			generator.manual_seed(seed)
+	def shuffle_indices(cls, N, seed=None, gen=None):
+		if seed is not None and gen is None:
+			gen = torch.Generator()
+			gen.manual_seed(seed)
 		# TODO: include a warning if cls._is_big_number(N)
-		return torch.randint(N, size=(N,), generator=generator) \
-			if cls._is_big_number(N) else torch.randperm(N, generator=generator)
+		return torch.randint(N, size=(N,), generator=gen) \
+			if cls._is_big_number(N) else torch.randperm(N, generator=gen)
 
 
-	def selection_iterator(self, batch_size=None, shuffle=False, drop_last=None):
-		order = self.shuffle_indices(len(self), generator=self.gen) if shuffle else torch.arange(len(self))
-		return order.split(self.batch_size)
+	def selection_iterator(self, batch_size=None, shuffle=False, drop_last=None, gen=None):
+		if gen is None:
+			gen = self.gen
+		if batch_size is None:
+			batch_size = self.batch_size
+		if drop_last is None:
+			drop_last = self._drop_last
+		order = self.shuffle_indices(len(self), gen=gen) if shuffle else torch.arange(len(self))
+		inds = order.split(batch_size)
+		if drop_last and len(selections) > 1 and len(selections[-1]) != len(selections[0]):
+			inds.pop()
+		return inds
 
 
 	@staticmethod
@@ -345,7 +376,7 @@ class Dataset(DataCollection, base.FixedBuffer):
 
 	def subset(self, cut=None, indices=None, shuffle=False):
 		if indices is None:
-			indices = self._split_indices(indices=self.shuffle_indices(len(self), generator=self.gen)
+			indices, _ = self._split_indices(indices=self.shuffle_indices(len(self), gen=self.gen)
 										  if shuffle else torch.arange(len(self)), cut=cut)
 		new = self.copy()
 		new._default_len = len(indices)
@@ -357,7 +388,7 @@ class Dataset(DataCollection, base.FixedBuffer):
 
 
 	def get_iterator(self, sample_format=unspecified_argument, device=unspecified_argument, sample_kwargs={},
-	                 infinite=None, drop_last=None,
+	                 infinite=None, drop_last=None, gen=None,
 	                 batch_size=None, shuffle=None, **kwargs):
 		if sample_format is unspecified_argument:
 			sample_format = self.sample_format
@@ -373,7 +404,7 @@ class Dataset(DataCollection, base.FixedBuffer):
 			shuffle = self._shuffle_batches
 		return _DatasetIterator(self, infinite=infinite, drop_last=drop_last,
 		                        sample_format=sample_format, device=device, sample_kwargs=sample_kwargs,
-		                        batch_size=batch_size, shuffle=shuffle,
+		                        batch_size=batch_size, shuffle=shuffle, gen=gen,
 		                        **kwargs)
 
 
@@ -411,25 +442,27 @@ class Dataset(DataCollection, base.FixedBuffer):
 						ratios.append(cut)
 						cut = next(itr, 'done')
 					if len(cuts):
-						rationums = [remaining*abs(ratio) for ratio in ratios]
-						nums.extend([math.copysign(1, r)*n for r, n in zip(ratios, rationums)])
+						rationums = [int(remaining*abs(ratio)) for ratio in ratios]
+						nums.extend([int(math.copysign(1, r)*n) for r, n in zip(ratios, rationums)])
 						remaining -= sum(rationums)
 				if cut is None:
 					pieces = len([cut, *itr])
 					assert remaining > pieces, f'cant evenly distribute {remaining} samples into {pieces} cuts'
-					evennums = [remaining//pieces for _ in range(pieces)]
+					evennums = [int(remaining//pieces) for _ in range(pieces)]
 					nums.extend(evennums)
 					remaining -= sum(evennums)
 
 		if remaining > 0:
 			nums[-1] += remaining
 
-		indices = self.shuffle_indices(len(self), generator=self.gen) if shuffle else torch.arange(len(self))
+		indices = self.shuffle_indices(len(self), gen=self.gen) if shuffle else torch.arange(len(self))
 
+		plan = dict(zip(names, nums))
 		parts = {}
-		for name, num in zip(names, nums):
+		for name in sorted(names):
+			num = plan[name]
 			part, indices = self._split_indices(indices, num)
-			parts[name] = part
+			parts[name] = self.subset(indices=part)
 
 		if register_modes:
 			self.register_modes(**parts)
@@ -437,7 +470,6 @@ class Dataset(DataCollection, base.FixedBuffer):
 		if auto_name:
 			return [parts[name] for name, _ in named_cuts]
 		return parts
-
 
 
 
@@ -450,17 +482,19 @@ class DataGenerator(DataCollection): # TODO: batches are specified by number of 
 	def __next__(self):
 		raise NotImplementedError
 
-	pass
-
 
 
 class _DatasetIterator: # TODO: pbar integration
 	def __init__(self, dataset, infinite=False, drop_last=False,
 	             sample_format=None, device=None, sample_kwargs={},
-	             batch_size=None, shuffle=True,
+	             batch_size=None, shuffle=True, seed=None, gen=None,
 	             **kwargs):
 		super().__init__(**kwargs)
 		self._dataset = dataset
+
+		if seed is not None:
+			gen = torch.Generator().manual_seed(seed)
+		self._gen = gen
 
 		self._device = device
 		self._sample_format = sample_format
@@ -475,9 +509,8 @@ class _DatasetIterator: # TODO: pbar integration
 
 
 	def generate_selections(self):
-		selections = self._dataset.selection_iterator(batch_size=self._batch_size, shuffle=self._shuffle)
-		if self._drop_last and len(selections) > 1 and len(selections[-1]) != len(selections[0]):
-			selections.pop()
+		selections = self._dataset.selection_iterator(batch_size=self._batch_size, shuffle=self._shuffle,
+		                                              drop_last=self._drop_last, gen=self._gen)
 		self._epoch_len = len(selections)
 		selections = list(reversed(selections))
 		return selections
@@ -513,6 +546,7 @@ class _DatagenIterator:
 
 
 class ObservationDataset(Dataset):
+	sample_format = 'observation'
 
 	@property
 	def din(self):
@@ -542,6 +576,9 @@ class ObservationDataset(Dataset):
 
 
 class SupervisedDataset(ObservationDataset):
+	sample_format = ('observation', 'target')
+
+
 	@property
 	def dout(self):
 		return self.get_target_space()
@@ -565,6 +602,9 @@ class SupervisedDataset(ObservationDataset):
 
 
 class LabeledDataset(SupervisedDataset):
+	sample_format = ('observation', 'label')
+
+
 	def get_label_space(self):
 		return self.get_space('label')
 
@@ -581,6 +621,19 @@ class LabeledDataset(SupervisedDataset):
 			# TODO: warning: guessing target buffer
 			key = list(self.buffers.keys())[0 if len(self.buffers) < 3 else -3]
 			self.register_buffer('label', self._wrap_buffer(self.get_buffer(key)))
+
+
+	def generate_label(self, N, seed=None, gen=None):
+		if seed is not None:
+			gen = torch.Generator().manual_seed(seed)
+		if gen is None:
+			gen = self.gen
+		return self.get_label_space().sample(N, seed=seed, gen=gen)
+
+
+	def generate_observation_from_label(self, label, seed=None, gen=None):
+		raise NotImplementedError
+
 # Labeled means there exists a deterministic mapping from labels to observations
 # (not including possible subsequent additive noise)
 
@@ -638,6 +691,10 @@ class SyntheticDataset(LabeledDataset):
 		if gen is None:
 			gen = self.gen
 		return self.get_mechanism_space().sample(N, gen=gen)
+
+
+	def generate_observation_from_label(self, label, seed=None, gen=None):
+		return self.generate_observation_from_mechanism(self.transform_to_mechanisms(label), seed=seed, gen=gen)
 
 
 	def generate_observation_from_mechanism(self, mechanism, seed=None, gen=None):

@@ -345,7 +345,7 @@ class VolumeSpace(SpatialSpace):
 
 class CategoricalDim(DimSpec):
 	def __init__(self, n, **kwargs):
-		super().__init__(min=0, max=n - 1, **kwargs)
+		super().__init__(min=torch.as_tensor(0), max=torch.as_tensor(n - 1), **kwargs)
 		self._min = self._min.long()
 		self._max = self._max.long()
 		self.n = n
@@ -388,19 +388,6 @@ class CategoricalDim(DimSpec):
 		return x.sub(y).bool().long()
 
 
-# class CategoricalProbsDim(CategoricalDim):
-#
-# 	def difference(self, x, y):
-# 		return F.binary_cross_entropy(x, y)
-#
-# class CategoricalLogitsDim(CategoricalProbsDim):
-#
-#
-#
-# 	def difference(self, x, y):
-# 		return F.binary_cross_entropy_with_logits(x, y)
-
-
 class BinaryDim(CategoricalDim):
 	def __init__(self, n=None, **kwargs):
 		super().__init__(n=2, **kwargs)
@@ -419,7 +406,7 @@ class JointSpace(DimSpec):
 				singles.append(d)
 		dims = singles
 		shape = (sum(len(dim) for dim in dims),)
-		expanded_shape = sum(dim.expanded_len() for dim in dims)
+		expanded_shape = (sum(dim.expanded_len() for dim in dims),)
 		
 		super().__init__(shape=shape, min=None, max=None, **kwargs)
 		

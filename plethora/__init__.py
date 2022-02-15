@@ -8,7 +8,7 @@ from .datasets.toy import SwissRollDataset
 @fig.Script('test')
 def _test_script(A):
 
-	dataset = SwissRollDataset().load()
+	dataset = SwissRollDataset(100).load()
 
 	print(len(dataset))
 
@@ -16,6 +16,18 @@ def _test_script(A):
 	print(dataset.get_observation_space().sample(10).shape)
 
 	print(dataset.get_label().shape)
+
+	batches = [batch for batch in dataset]
+	for batch in dataset:
+		batches.append(batch)
+	print([[x.shape for x in batch] for batch in batches])
+
+	out = dataset.subset(0.5)
+	print(out.get_observation().shape)
+
+	out = dataset.split([None, 0.2])
+	print(out)
+	print(out.get_observation().shape)
 
 	pass
 

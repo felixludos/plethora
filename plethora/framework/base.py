@@ -22,11 +22,14 @@ class NotLoadedError(Exception):
 class Buffer(BufferTransform, Loadable, DeviceContainer, Seeded):
 	space = None
 	
-	def __init__(self, space=unspecified_argument, default_len=None, **kwargs):
+	def __init__(self, space=unspecified_argument, transforms=None, default_len=None, **kwargs):
 		super().__init__(**kwargs)
 		if space is unspecified_argument:
 			space = self.space
+		if transforms in None:
+			transforms = []
 		self.space = space
+		self.transforms = transforms
 		self._waiting_update = None
 		self._default_len = default_len
 
@@ -69,6 +72,12 @@ class Buffer(BufferTransform, Loadable, DeviceContainer, Seeded):
 		return self.update(**update)
 
 
+	def transform(self, sample=None):
+		for transform in self.transforms:
+			sample = transform(sample)
+		return sample
+
+
 	def _get(self, sel=None, device=None, **kwargs):
 		raise NotImplementedError
 
@@ -76,7 +85,7 @@ class Buffer(BufferTransform, Loadable, DeviceContainer, Seeded):
 	def get(self, sel=None, device=None, **kwargs):
 		if not self.is_loaded():
 			raise NotLoadedError(self)
-		sample = self._get(sel=sel, device=device, **kwargs)
+		sample = self._get(sel, device=device, **kwargs)
 		return self.transform(sample)
 
 
@@ -84,11 +93,11 @@ class Buffer(BufferTransform, Loadable, DeviceContainer, Seeded):
 class FixedBuffer(Buffer): # fixed number of samples (possibly not known until after loading)
 
 	def _get(self, indices=None, device=None, **kwargs):
-		return super()._get(sel=indices, device=device, **kwargs)
+		return super()._get(indices, device=device, **kwargs)
 
 
 	def get(self, indices=None, device=None, **kwargs):
-		return super().get(sel=indices, device=device, **kwargs)
+		return super().get(indices, device=device, **kwargs)
 
 
 	def _update(self, indices=None, **kwargs):
@@ -168,8 +177,8 @@ class Function(Device):
 		return self.din, self.dout
 	
 
+class TensorContainer(Device):
 
-class Batch(Device):
 	def _item_iterator(self):
 		raise NotImplementedError
 
@@ -189,7 +198,7 @@ class Batch(Device):
 
 
 
-class BatchList(Batch, list):
+class TensorList(TensorContainer, list):
 	def _str_info(self):
 		num = len(self)
 		msg = 'item' if num == 1 else 'items'
@@ -201,7 +210,7 @@ class BatchList(Batch, list):
 
 
 
-class BatchDict(Batch, dict):
+class TensorDict(TensorContainer, dict):
 	def _str_info(self):
 		msg = ', '.join(self.keys())
 		return msg
