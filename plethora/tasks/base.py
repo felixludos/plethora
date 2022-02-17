@@ -1,15 +1,21 @@
 
 import torch
 
+from omnibelt import get_printer
+
 from ..framework.features import Seeded
 from ..framework.base import TensorDict
 
-
+prt = get_printer(__file__)
 
 class ResultsContainer(TensorDict):
 	def __init__(self, dataset, **kwargs):
 		super().__init__(**kwargs)
 		self.dataset = dataset
+
+
+	def set_batch(self, batch):
+		self.batch = batch
 
 
 
@@ -22,19 +28,36 @@ class Task(Seeded): # TODO: specify random seed for reproducibility
 		self._score_key = score_key
 
 
-	def score_names(self):
+	@staticmethod
+	def score_names():
 		return ['score']
 
 
-	def result_names(self):
-		return []
+	@staticmethod
+	def create_results_container(dataset=None, **kwargs):
+		return ResultsContainer(dataset)
+	
+	
+	@classmethod
+	def prepare(cls, dataset=None, **kwargs):
+		return cls.create_results_container(dataset=dataset, **kwargs)
+		
+		
+	@staticmethod
+	def run(info, slim=False, online=False, seed=None, gen=None):
+		raise NotImplementedError
 
 
-	def _create_results_container(self):
-		return ResultsContainer(self.dataset)
+	@classmethod
+	def select_results(cls, inp, out, slim=False, online=False):
+		scores = set(cls.score_names())
+		for key in list(out.keys()):
+			if slim and key not in scores:
+				del out[key]
+		return out
 
 
-	def compute(self, slim=None, online=None, seed=None, gen=None, info=None):
+	def compute(self, slim=None, online=None, seed=None, gen=None, info=None, **kwargs):
 		'''
 		:param slim: use little space (in results)
 		:param online: use little time (in computing results)
@@ -51,77 +74,75 @@ class Task(Seeded): # TODO: specify random seed for reproducibility
 			gen = torch.Generator().manual_seed(seed)
 		if gen is None:
 			gen = self.gen
+		return self._compute(info=info, slim=slim, online=online, gen=gen, seed=seed, **kwargs)
 
+
+	def _compute(self, info=None, slim=False, online=False, gen=None, seed=None, **kwargs):
 		if info is None:
-			info = self._create_results_container()
-		info = self._compute(info=info, slim=slim, online=online, gen=gen, seed=seed)
-
-		# if slim: # TODO: auto_slim
-		# 	info = self._slim_down(info)
-		# return info
+			info = self.prepare(dataset=self.dataset, **kwargs)
+		out = self.run(info, slim=slim, online=online, gen=gen, seed=seed)
+		return self.select_results(info, out, slim=slim, online=online)
+		
 
 
-	# def _slim_down(self, info):
-	# 	for key in list(keys)
-
-
-	def _compute(self, info, slim=False, online=False, gen=None, seed=None):
-		raise NotImplementedError
-
-
-
-class BatchResultsContainer(TensorDict):
-	def __init__(self, batch, **kwargs):
-		super().__init__(**kwargs)
-		self.set_batch(batch)
-
-	def set_batch(self, batch):
-		self.batch = batch
+# class IterativeResultsContainer(ResultsContainer):
+# 	# def __init__(self, infinite=False, sample_format=None,
+# 	#              drop_last=None, batch_size=None, **kwargs):
+# 	# 	super().__init__(**kwargs)
+# 	# 	self.batch = None
+# 	# 	self._dataset_itr = None
+# 	#
+# 	# 	self.epochs_complete = 0
+# 	# 	self._infinite = infinite
+# 	# 	self._sample_format = sample_format
+# 	# 	self._drop_last = drop_last
+# 	# 	self._batch_size = batch_size
+# 	#
+# 	#
+# 	# def _create_dataset_iterator(self):
+# 	# 	return self.dataset.get_iterator(infinite=self._infinite, sample_format=self._sample_format,
+# 	# 	                                 drop_last=self._drop_last, batch_size=self._batch_size)
+# 	#
+# 	#
+# 	# def next_batch(self):
+# 	# 	if self._dataset_itr is None:
+# 	# 		self._dataset_itr = self._create_dataset_iterator()
+# 	# 	batch = next(self._dataset_itr)
+# 	# 	self.set_batch(batch)
+# 	# 	return batch
+#
+#
+# 	def set_batch(self, batch):
+# 		self.batch = batch
 
 
 
 class BatchedTask(Task):
-	def __init__(self, sample_format=None, device=None, drop_last=None, batch_size=None, shuffle=None, **kwargs):
+	def __init__(self, sample_format=None, drop_last=None, batch_size=None, **kwargs):
 		super().__init__(**kwargs)
 		self._sample_format = sample_format
 		self._batch_size = batch_size
 		self._drop_last = drop_last
 
 
-	def _create_batch_results_container(self, batch):
-		return BatchResultsContainer(batch)
+	@classmethod
+	def run(cls, info, slim=False, online=False, seed=None, gen=None):
+		for batch in info.dataset:
+			info = cls.run_step(batch, info, slim=slim, online=online, seed=seed, gen=gen)
+		return cls.aggregate(info, slim=slim, online=online, seed=seed, gen=gen)
 
 
-	def _compute(self, overall, slim=False, online=False, gen=None, seed=None):
-		dataset = overall.dataset
-
-		if seed is not None:
-			gen = torch.Generator().manual_seed(seed)
-		if gen is None:
-			gen = self.gen
-
-		info = None
-		for batch in dataset.get_iterator(sample_format=self._sample_format, batch_size=self._batch_size,
-		                                  shuffle=True, drop_last=self._drop_last, gen=gen):
-			if info is None:
-				info = self._create_batch_results_container(batch)
-			else:
-				info.set_batch(batch)
-			info = self._compute_batch(info, slim=slim, online=online, gen=gen)
-
-			if online:
-				break
-
-		return self._aggregate(overall, info, slim=slim, online=online, gen=gen)
-
-
-	def _aggregate(self, overall_info, batch_info, slim=None, online=None, gen=None):
-		overall_info.update(batch_info)
-		return overall_info
-
-
-	def _compute_batch(self, info, slim=False, online=False, gen=None):
+	@staticmethod
+	def run_step(batch, info, slim=False, online=False, seed=None, gen=None):
 		raise NotImplementedError
+
+	
+	@staticmethod
+	def aggregate(info, slim=False, online=False, seed=None, gen=None):
+		return info
+	
+	
+
 
 
 

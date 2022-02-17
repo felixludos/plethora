@@ -1,15 +1,15 @@
+import torch
+from omnibelt import get_printer
+from ..base import Task, BatchedTask, ResultsContainer
 
-from ..base import Task, BatchedTask
+prt = get_printer(__file__)
 
 
-
-class BatchAccumulationContainer(TensorDict):
+class AccumulationContainer(ResultsContainer):
 	def __init__(self, **kwargs):
 		super().__init__(**kwargs)
 		self.criteria = []
 
-	def gen_batch(self):
-		raise NotImplementedError
 
 	def accumulate(self, criteria):
 		self.criteria.append(criteria)
@@ -33,32 +33,48 @@ class ReconstructionTask(BatchedTask):
 		self.criterion = criterion
 
 
-	def _create_batch_results_container(self, batch):
-		return BatchAccumulationContainer(batch)
+	@staticmethod
+	def create_results_container(dataset=None, **kwargs):
+		return AccumulationContainer(dataset=dataset, **kwargs)
+	
+	
+	@classmethod
+	def prepare(cls, dataset=None, encoder=None, decoder=None, criterion=None, **kwargs):
+		if encoder is None:
+			prt.warning('No encoder provided')
+		if decoder is None:
+			prt.warning('No decoder provided')
+		if criterion is None:
+			prt.warning('No criterion provided')
+		info = super().prepare(dataset=dataset, **kwargs)
+		info.encoder = encoder
+		info.decoder = decoder
+		info.criterion = criterion
+		return info
+	
+	
+	@classmethod
+	def run_step(cls, batch, info, slim=None, online=True, gen=None, seed=None):
+		info.dataset.change_sample_format(batch, 'original')
+		info['original'] = batch
+		cls._encode(info)
+		cls._decode(info)
+		return info
 
-
-	def _compute_batch(self, info, slim=None, gen=None, seed=None):
-		self._encode(info)
-		self._decode(info)
+	
+	@staticmethod
+	def _encode(info):
+		info['code'] = info.encoder.encode(info['original'])
 		return info
 
 
-	def _encode(self, info):
-		original = info.batch
-
-		code = self.encoder.encode(original)
-		info.update({
-			'original': original,
-			'code': code,
-		})
-		return info
-
-
-	def _decode(self, info):
+	@staticmethod
+	def _decode(info):
+		original = info['original']
 		code = info['code']
 
-		reconstruction = self.decoder.decode(code)
-		comparison = self.criterion.compare(reconstruction, original)
+		reconstruction = info.decoder.decode(code)
+		comparison = info.criterion.compare(reconstruction, original)
 
 		info.accumulate(comparison)
 		info.update({
@@ -68,20 +84,20 @@ class ReconstructionTask(BatchedTask):
 		return info
 
 
-	@staticmethod
-	def _aggregate(self, overall_info, batch_info):
-		overall_info = super()._aggregate(overall_info, batch_info)
+	@classmethod
+	def aggregate(cls, info, slim=False, online=False, seed=None, gen=None):
+		info = super().aggregate(info)
 
-		criteria = batch_info.aggregate()
+		criteria = info.aggregate()
 
-		overall_info.update({
+		info.update({
 			'criteria': criteria,
 			'mean': criteria.mean(),
 			'max': criteria.max(),
 			'min': criteria.min(),
 			'std': criteria.std(),
 		})
-		return overall_info
+		return info
 
 
 

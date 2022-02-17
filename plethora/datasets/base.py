@@ -214,14 +214,66 @@ class DataCollection(base.Buffer):
 		return name in self.buffers
 
 
-	def _process_sample(self, sample, *, sample_format, device, **kwargs):
-		return sample
+	def _process_sample(self, sample, *, sample_format, device, sel=None, **kwargs):
 		if isinstance(sample_format, (list, tuple)):
-			return base.TensorList(*sample, device=device)
-		elif isinstance(sample_format, (set, dict)):
-			return base.TensorDict(device=device, **sample)
+			sample = base.TensorList(sample)
+		elif isinstance(sample_format, (dict, set)):
+			sample = base.TensorDict(**sample)
+		
+		sample.sample_format = sample_format
+		sample.sel = sel
+		sample.device = device
+		return sample
+
+
+	def change_sample_format(self, batch, sample_format, get_missing=True):
+		return self._process_sample(self._get_sample_format(sample_format, batch=batch, allow_loading=get_missing),
+		                            sample_format=sample_format, device=batch.device, sel=batch.sel)
+		
+	
+	def _get_sample_format(self, sample_format, sel=None, device=None, batch=None, allow_loading=True, strict=True):
+		if batch is None:
+			assert sel is not None and device is not None
+		
+		if isinstance(sample_format, str):
+			if batch is not None and sample_format in getattr(batch, 'sample_format', []):
+				old_format = getattr(batch, 'sample_format')
+				if isinstance(old_format, (list, tuple)):
+					sample = batch[old_format.index(sample_format)]
+				elif isinstance(old_format, (dict, set)):
+					sample = batch[sample_format]
+				else:
+					sample = batch
+			elif allow_loading:
+				if strict:
+					self._check_buffer_names(sample_format)
+				sample = self.buffers[sample_format].get(sel, device=device)
+			else:
+				raise BufferNotFoundError(sample_format)
+			
+		elif isinstance(sample_format, (list, tuple)):
+			sample = [self._get_sample_format(key, batch=batch, sel=sel, device=device,
+			                                  allow_loading=allow_loading, strict=strict) for key in sample_format]
+		
+		elif isinstance(sample_format, set):
+			sample = {key: self._get_sample_format(key, batch=batch, sel=sel, device=device,
+			                                       allow_loading=allow_loading, strict=strict) for key in sample_format}
+		
+		elif isinstance(sample_format, dict):
+			sample = {}
+			for key, transforms in sample_format.items():
+				x = self._get_sample_format(key, batch=batch, sel=sel, device=device,
+				                            allow_loading=allow_loading, strict=strict)
+				if transforms is not None and not isinstance(transforms, (list, tuple)):
+					transforms = [transforms]
+				for transform in transforms:
+					x = transform.transform(x)
+				sample[key] = x
+
 		else:
-			return sample
+			raise NotImplementedError(f'bad sample format: {sample_format}')
+		
+		return sample
 
 
 	def _get(self, sel=None, sample_format=None, device=None, strict=True, **kwargs):
@@ -229,36 +281,8 @@ class DataCollection(base.Buffer):
 			sample_format = self.sample_format
 		if device is None:
 			device = self.batch_device
-
-		if isinstance(sample_format, str):
-			if strict:
-				self._check_buffer_names(sample_format)
-			sample = self.buffers[sample_format].get(sel, device=device)
-		elif isinstance(sample_format, (list, tuple)):
-			if strict:
-				self._check_buffer_names(*sample_format)
-			sample = [self.buffers[name].get(sel, device=device) for name in sample_format]
-		elif isinstance(sample_format, set):
-			if strict:
-				self._check_buffer_names(*sample_format)
-			sample = {name:self.buffers[name].get(sel, device=device)
-			         for name in sample_format if name in self.buffers}
-		elif isinstance(sample_format, dict):
-			if strict:
-				self._check_buffer_names(*sample_format)
-			sample = {}
-			for name, transforms in sample_format.items():
-				if name in self.buffers:
-					samples = self.buffers[name].get(sel, device=device)
-					if transforms is not None and not isinstance(transforms, (list, tuple)):
-						transforms = [transforms]
-					for transform in transforms:
-						samples = transform.transform(samples)
-					sample[name] = samples
-		else:
-			raise NotImplementedError(f'bad sample format: {sample_format}')
-
-		return self._process_sample(sample, sample_format=sample_format, device=device, **kwargs)
+		return self._process_sample(self._get_sample_format(sample_format, sel=sel, device=device, strict=strict),
+		                            sel=sel, sample_format=sample_format, device=device, **kwargs)
 
 
 	def set_sample_format(self, sample_format):
@@ -349,7 +373,7 @@ class Dataset(DataCollection, base.FixedBuffer):
 			drop_last = self._drop_last
 		order = self.shuffle_indices(len(self), gen=gen) if shuffle else torch.arange(len(self))
 		inds = order.split(batch_size)
-		if drop_last and len(selections) > 1 and len(selections[-1]) != len(selections[0]):
+		if drop_last and len(inds) > 1 and len(inds[-1]) != len(inds[0]):
 			inds.pop()
 		return inds
 
