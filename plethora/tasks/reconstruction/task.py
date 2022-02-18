@@ -34,6 +34,11 @@ class ReconstructionTask(BatchedTask):
 
 
 	@staticmethod
+	def score_names():
+		return ['mean', 'std', 'min', 'max', *super().score_names()]
+
+
+	@staticmethod
 	def create_results_container(dataset=None, **kwargs):
 		return AccumulationContainer(dataset=dataset, **kwargs)
 	
@@ -51,11 +56,17 @@ class ReconstructionTask(BatchedTask):
 		info.decoder = decoder
 		info.criterion = criterion
 		return info
+
+
+	@classmethod
+	def run(cls, info, sample_format=None, **kwargs):
+		if sample_format is None:
+			sample_format = 'observation'
+		return super().run(info, sample_format=sample_format, **kwargs)
 	
 	
 	@classmethod
 	def run_step(cls, batch, info, slim=None, online=True, gen=None, seed=None):
-		info.dataset.change_sample_format(batch, 'original')
 		info['original'] = batch
 		cls._encode(info)
 		cls._decode(info)
@@ -64,7 +75,8 @@ class ReconstructionTask(BatchedTask):
 	
 	@staticmethod
 	def _encode(info):
-		info['code'] = info.encoder.encode(info['original'])
+		code = info['original'] if info.encoder is None else info.encoder.encode(info['original'])
+		info['code'] = code
 		return info
 
 

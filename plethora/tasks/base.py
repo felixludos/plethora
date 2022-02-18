@@ -49,11 +49,13 @@ class Task(Seeded): # TODO: specify random seed for reproducibility
 
 
 	@classmethod
-	def select_results(cls, inp, out, slim=False, online=False):
+	def select_results(cls, inp, out, slim=False, online=False, score_key=None):
 		scores = set(cls.score_names())
 		for key in list(out.keys()):
 			if slim and key not in scores:
 				del out[key]
+		if 'score' not in out and score_key is not None and score_key in out:
+			out['score'] = out[score_key]
 		return out
 
 
@@ -118,17 +120,37 @@ class Task(Seeded): # TODO: specify random seed for reproducibility
 
 
 class BatchedTask(Task):
-	def __init__(self, sample_format=None, drop_last=None, batch_size=None, **kwargs):
+	def __init__(self, sample_format=None, drop_last=None, batch_size=None, load_missing=True, **kwargs):
 		super().__init__(**kwargs)
 		self._sample_format = sample_format
 		self._batch_size = batch_size
 		self._drop_last = drop_last
-
-
+		self._load_missing = load_missing
+	
+	
+	def _compute(self, info=None, batch=None, slim=False, online=False, gen=None, seed=None, **kwargs):
+		if info is None:
+			info = self.prepare(dataset=self.dataset, **kwargs)
+		out = self.run(info, batch=batch, load_missing=self._load_missing, sample_format=self._sample_format,
+		               drop_last=self._drop_last, batch_size=self._batch_size,
+		               slim=slim, online=online, gen=gen, seed=seed)
+		return self.select_results(info, out, slim=slim, online=online, score_key=self._score_key)
+	
+	
 	@classmethod
-	def run(cls, info, slim=False, online=False, seed=None, gen=None):
-		for batch in info.dataset:
-			info = cls.run_step(batch, info, slim=slim, online=online, seed=seed, gen=gen)
+	def run(cls, info, batch=None, load_missing=True,
+	        sample_format=None, drop_last=None, batch_size=None,
+	        slim=False, online=False, seed=None, gen=None):
+		if batch is None:
+			for batch in info.dataset.get_iterator(sample_format=sample_format, drop_last=drop_last,
+			                                       batch_size=batch_size):
+				info.set_batch(batch)
+				info = cls.run_step(batch, info, slim=slim, online=online, seed=seed, gen=gen)
+		else:
+			if sample_format is not None:
+				batch = info.dataset.change_sample_format(batch, sample_format=sample_format, get_missing=load_missing)
+			info.set_batch(batch)
+			info = cls.run_step(batch, info, slim=slim, online=online, gen=gen, seed=seed)
 		return cls.aggregate(info, slim=slim, online=online, seed=seed, gen=gen)
 
 

@@ -297,8 +297,8 @@ class DataCollection(base.Buffer):
 		raise NotImplementedError
 
 
-	def batch(self, N=None):
-		raise NotImplementedError
+	# def batch(self, N=None):
+	# 	raise NotImplementedError
 
 
 	def register_modes(self, **modes):
