@@ -29,10 +29,37 @@ class AccumulationContainer(ResultsContainer):
 
 	def aggregate_true_distances(self):
 		return torch.cat(self.true_distances)
-	
-	
 
-class MetricTask(BatchedTask):
+
+
+class AbstractMetricTask(BatchedTask):
+	@classmethod
+	def run_step(cls, batch, info, **kwargs):
+		info.clear()
+		info.set_batch(batch)
+		cls._encode(info)
+		cls._measure_distance(info)
+		cls._true_distance(info)
+		return info
+
+
+	@staticmethod
+	def _encode(info):
+		raise NotImplementedError
+
+
+	@staticmethod
+	def _measure_distance(info):
+		raise NotImplementedError
+
+
+	@staticmethod
+	def _true_distance(info):
+		raise NotImplementedError
+
+
+
+class MetricTask(AbstractMetricTask):
 	def __init__(self, encoder=None, metric=None, criterion=None,
 	             score_key=None, **kwargs):
 		super().__init__(score_key=score_key, **kwargs)
@@ -40,16 +67,15 @@ class MetricTask(BatchedTask):
 		self.encoder = encoder
 		self.metric = metric
 		self.criterion = criterion
-	
-	
+
+
 	@staticmethod
 	def create_results_container(dataset=None, **kwargs):
 		return AccumulationContainer(dataset=dataset, **kwargs)
-	
-	
-	@staticmethod
-	def score_names():
-		return ['agreement', *super().score_names()]
+
+
+	def _compute(self, **kwargs):
+		return super()._compute(encoder=self.encoder, metric=self.metric, criterion=self.criterion, **kwargs)
 
 
 	@classmethod
@@ -73,14 +99,6 @@ class MetricTask(BatchedTask):
 			sample_format = 'observation', 'mechanism'
 		return super().run(info, sample_format=sample_format, **kwargs)
 
-	
-	@classmethod
-	def run_step(cls, batch, info, slim=None, online=True, gen=None, seed=None):
-		cls._encode(info)
-		cls._measure_distance(info)
-		cls._true_distance(info)
-		return info
-	
 	
 	@staticmethod
 	def _encode(info):

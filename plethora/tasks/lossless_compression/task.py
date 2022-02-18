@@ -9,50 +9,49 @@ prt = get_printer(__file__)
 class AccumulationContainer(ResultsContainer):
 	def __init__(self, **kwargs):
 		super().__init__(**kwargs)
-		self.criteria = []
+		self.counts = []
 
 
-	def accumulate(self, criteria):
-		self.criteria.append(criteria)
+	def accumulate(self, counts):
+		self.counts.append(counts)
 
 
 	def aggregate(self):
-		return torch.cat(self.criteria)
+		return torch.cat(self.counts)
 
 
 
-class AbstractReconstructionTask(BatchedTask):
+class AbstractLosslessCompressionTask(BatchedTask):
 	@classmethod
 	def run_step(cls, batch, info, **kwargs):
-		info.clear()
 		info.set_batch(batch)
-		cls._encode(info)
-		cls._decode(info)
+		cls._compress(info)
+		cls._decompress(info)
 		return info
 
 
 	@staticmethod
-	def _encode(info):
+	def _compress(info):
 		raise NotImplementedError
 
 
 	@staticmethod
-	def _decode(info):
+	def _decompress(info):
 		raise NotImplementedError
 
 
 
-class ReconstructionTask(AbstractReconstructionTask):
-	def __init__(self, encoder=None, decoder=None, criterion=None,
+class LosslessCompressionTask(AbstractLosslessCompressionTask):
+	def __init__(self, compressor=None, encoder=None, decoder=None,
 	             sample_format=None, score_key=None, **kwargs):
 		if score_key is None:
-			score_key = 'mean'
+			score_key = 'bpd'
 		if sample_format is None:
 			sample_format = 'observation'
 		super().__init__(sample_format=sample_format, score_key=score_key, **kwargs)
+		self.compressor = compressor
 		self.encoder = encoder
 		self.decoder = decoder
-		self.criterion = criterion
 
 
 	@staticmethod
@@ -66,11 +65,11 @@ class ReconstructionTask(AbstractReconstructionTask):
 
 
 	def _compute(self, **kwargs):
-		return super()._compute(encoder=self.encoder, decoder=self.decoder, criterion=self.criterion, **kwargs)
+		return super()._compute(encoder=self.encoder, decoder=self.decoder, compressor=self.compressor, **kwargs)
 
 
 	@classmethod
-	def prepare(cls, encoder=None, decoder=None, criterion=None, **kwargs):
+	def prepare(cls, encoder=None, decoder=None, compressor=None, **kwargs):
 		if encoder is None:
 			prt.warning('No encoder provided')
 		if decoder is None:
@@ -80,7 +79,7 @@ class ReconstructionTask(AbstractReconstructionTask):
 		info = super().prepare(**kwargs)
 		info.encoder = encoder
 		info.decoder = decoder
-		info.criterion = criterion
+		info.compressor = compressor
 		return info
 
 
@@ -90,44 +89,38 @@ class ReconstructionTask(AbstractReconstructionTask):
 			sample_format = 'observation'
 		return super().run(info, sample_format=sample_format, **kwargs)
 
-	
-	@staticmethod
-	def _encode(info):
-		code = info['original'] if info.encoder is None else info.encoder.encode(info['original'])
-		info['code'] = code
-		return info
-
 
 	@staticmethod
-	def _decode(info):
-		original = info['original']
-		code = info['code']
-
-		reconstruction = info.decoder.decode(code)
-		comparison = info.criterion.compare(reconstruction, original)
-
-		info.accumulate(comparison)
-		info.update({
-			'reconstruction': reconstruction,
-			'comparison': comparison,
-		})
-		return info
+	def _compress(info):
 
 
-	@classmethod
-	def aggregate(cls, info, **kwargs):
+
+		pass
+
+
+	@staticmethod
+	def _decompress(info):
+		pass
+
+
+	@staticmethod
+	def aggregate(info, **kwargs):
 		info = super().aggregate(info, **kwargs)
 
-		criteria = info.aggregate()
+		counts = info.aggregate()
 
 		info.update({
-			'criteria': criteria,
+			'bpd': counts,
 			'mean': criteria.mean(),
 			'max': criteria.max(),
 			'min': criteria.min(),
 			'std': criteria.std(),
 		})
 		return info
+
+
+
+
 
 
 

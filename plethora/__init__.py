@@ -2,13 +2,14 @@ __version__ = "0.1"
 
 import omnifig as fig
 
-from .datasets.toy import SwissRollDataset
+from . import tasks
+from .datasets import toy
 
 
 @fig.Script('test')
 def _test_script(A):
 
-	dataset = SwissRollDataset(100).load()
+	dataset = toy.SwissRollDataset(100).load()
 
 	print(len(dataset))
 

@@ -144,12 +144,10 @@ class BatchedTask(Task):
 		if batch is None:
 			for batch in info.dataset.get_iterator(sample_format=sample_format, drop_last=drop_last,
 			                                       batch_size=batch_size):
-				info.set_batch(batch)
 				info = cls.run_step(batch, info, slim=slim, online=online, seed=seed, gen=gen)
 		else:
 			if sample_format is not None:
 				batch = info.dataset.change_sample_format(batch, sample_format=sample_format, get_missing=load_missing)
-			info.set_batch(batch)
 			info = cls.run_step(batch, info, slim=slim, online=online, gen=gen, seed=seed)
 		return cls.aggregate(info, slim=slim, online=online, seed=seed, gen=gen)
 
