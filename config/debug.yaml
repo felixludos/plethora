@@ -1,7 +1,10 @@
 
-_meta.script_name: test
+#_meta.script_name: test
 
+_meta.script_name: community-source
 
+name: test
+path: testpath
 
 
 
