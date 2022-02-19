@@ -2,6 +2,8 @@ import torch
 from omnibelt import get_printer
 from ..base import Task, BatchedTask, ResultsContainer
 
+from .bits_back import BitsBackCompressor
+
 prt = get_printer(__file__)
 
 
@@ -24,6 +26,7 @@ class AccumulationContainer(ResultsContainer):
 class AbstractLosslessCompressionTask(BatchedTask):
 	@classmethod
 	def run_step(cls, batch, info, **kwargs):
+		info.clear()
 		info.set_batch(batch)
 		cls._compress(info)
 		cls._decompress(info)
@@ -42,7 +45,7 @@ class AbstractLosslessCompressionTask(BatchedTask):
 
 
 class LosslessCompressionTask(AbstractLosslessCompressionTask):
-	def __init__(self, compressor=None, encoder=None, decoder=None,
+	def __init__(self, compressor=None, decompressor=None, encoder=None, decoder=None,
 	             sample_format=None, score_key=None, **kwargs):
 		if score_key is None:
 			score_key = 'bpd'
@@ -50,6 +53,7 @@ class LosslessCompressionTask(AbstractLosslessCompressionTask):
 			sample_format = 'observation'
 		super().__init__(sample_format=sample_format, score_key=score_key, **kwargs)
 		self.compressor = compressor
+		self.decompressor = decompressor
 		self.encoder = encoder
 		self.decoder = decoder
 
@@ -65,21 +69,33 @@ class LosslessCompressionTask(AbstractLosslessCompressionTask):
 
 
 	def _compute(self, **kwargs):
-		return super()._compute(encoder=self.encoder, decoder=self.decoder, compressor=self.compressor, **kwargs)
+		return super()._compute(encoder=self.encoder, decoder=self.decoder,
+		                        compressor=self.compressor, decompressor=self.decompressor,
+		                        **kwargs)
 
 
 	@classmethod
-	def prepare(cls, encoder=None, decoder=None, compressor=None, **kwargs):
+	def prepare(cls, encoder=None, decoder=None, compressor=None, decompressor=None,
+	            beta_confidence=1000, default_scale=0.1, online=False, verify=None, **kwargs):
 		if encoder is None:
 			prt.warning('No encoder provided')
 		if decoder is None:
 			prt.warning('No decoder provided')
-		if criterion is None:
-			prt.warning('No criterion provided')
-		info = super().prepare(**kwargs)
+		if compressor is None:
+			compressor = BitsBackCompressor(encoder, decoder,
+			                                beta_confidence=beta_confidence, default_scale=default_scale)
+		if decompressor is None:
+			prt.warning('No decompressor provided')
+			decompressor = compressor
+		if verify is None:
+			verify = not online
+		info = super().prepare(online=online, **kwargs)
 		info.encoder = encoder
 		info.decoder = decoder
 		info.compressor = compressor
+		info.decompressor = decompressor
+
+		info.verify = verify
 		return info
 
 
@@ -92,15 +108,20 @@ class LosslessCompressionTask(AbstractLosslessCompressionTask):
 
 	@staticmethod
 	def _compress(info):
-
-
-
-		pass
+		if 'original' not in info:
+			info['original'] = info.batch
+		info['code'] = info.compressor(info['original'])
+		info.accumulate(8*len(info['code']) / info['original'].numel())
+		return info
 
 
 	@staticmethod
 	def _decompress(info):
-		pass
+		if info.verify:
+			info['reconstructions'] = info.decompressor.decompress(info['code'])
+			if not torch.allclose(info['reconstructions'], info['original']):
+				prt.error('Lossless reconstructions do not match the originals.')
+		return info
 
 
 	@staticmethod
@@ -111,10 +132,10 @@ class LosslessCompressionTask(AbstractLosslessCompressionTask):
 
 		info.update({
 			'bpd': counts,
-			'mean': criteria.mean(),
-			'max': criteria.max(),
-			'min': criteria.min(),
-			'std': criteria.std(),
+			'mean': counts.mean(),
+			'max': counts.max(),
+			'min': counts.min(),
+			'std': counts.std(),
 		})
 		return info
 

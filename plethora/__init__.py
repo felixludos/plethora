@@ -34,9 +34,12 @@ def _download_community_directory(name, path, src_desc=None, silent=False):
 	with init_path.open('a+') as f:
 		f.write(f'# This directory was copied from {src_desc}\n')
 
-	shutil.copytree(str(path), str(dest))
+	bad = {str(path / '.git'): ['objects']}
+	ignore_bad_dirs = lambda d,fs: bad.get(d, [])
+
+	shutil.copytree(str(path), str(dest), dirs_exist_ok=True, ignore=ignore_bad_dirs)
 	if not silent:
-		print(f'{src_desc} has been copied to the community package "{name}".')
+		print(f'{str(path)} has been copied to the community package "{name}".')
 	return dest
 
 

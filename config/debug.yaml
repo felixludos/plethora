@@ -1,10 +1,12 @@
 
 #_meta.script_name: test
 
-_meta.script_name: community-source
 
-name: test
-path: testpath
+
+#_meta.script_name: community-source
+#name: bits_back
+#path: /is/ei/fleeb/workspace/temp/bits-back
+#src_desc: https://github.com/bits-back/bits-back
 
 
 
