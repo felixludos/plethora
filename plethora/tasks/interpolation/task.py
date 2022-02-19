@@ -1,7 +1,7 @@
 
 import torch
 from omnibelt import get_printer
-from ...datasets.base import SyntheticDataset
+from ...framework import util
 from ..base import Task, BatchedTask, ResultsContainer
 
 prt = get_printer(__file__)
