@@ -4,6 +4,8 @@ from omnibelt import get_printer
 from ...framework import util
 from ..base import Task, BatchedTask, ResultsContainer
 
+from .criterion import PathDiscriminator
+
 prt = get_printer(__file__)
 
 
@@ -31,20 +33,6 @@ class LinearInterpolator:
 			.view(1, n_steps, *[1]*len(a.shape[2:]))
 		steps = a + (b-a)*progress
 		return steps
-
-
-
-class PathDiscriminator:
-	def __init__(self, discriminator, **kwargs):
-		super().__init__(**kwargs)
-		self.discriminator = discriminator
-
-
-	def judge(self, paths):
-		B, K, *_ = paths.shape
-		samples = util.combine_dims(paths, 0, 2)
-		scores = self.discriminator(samples)
-		return util.split_dim(scores, B, K)
 
 
 
