@@ -1,13 +1,13 @@
-from pathlib import Path
-import sys, os
+# from pathlib import Path
+# import sys, os
 import numpy as np
 import torch
-from torch import nn
+# from torch import nn
 from torch.distributions import Normal
-from torch.nn import functional as F
-
-from torchvision import datasets, transforms
-import time
+# from torch.nn import functional as F
+#
+# from torchvision import datasets, transforms
+# import time
 
 from omnibelt import get_printer
 # import omnifig as fig
@@ -16,10 +16,10 @@ from omnibelt import get_printer
 # The code in these files can be found at https://github.com/bits-back/bits-back
 from ...community.bits_back import util
 from ...community.bits_back import rans
-from ...community.bits_back.torch_vae.tvae_beta_binomial import BetaBinomialVAE
+# from ...community.bits_back.torch_vae.tvae_beta_binomial import BetaBinomialVAE
 from ...community.bits_back.torch_vae import tvae_utils
-from ...community.bits_back.torch_vae.torch_mnist_compress import run_compress
-from ...community.bits_back.torch_vae.torch_bin_mnist_compress import run_bin_compress
+# from ...community.bits_back.torch_vae.torch_mnist_compress import run_compress
+# from ...community.bits_back.torch_vae.torch_bin_mnist_compress import run_bin_compress
 
 
 prt = get_printer(__file__)
