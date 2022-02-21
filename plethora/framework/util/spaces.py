@@ -16,7 +16,7 @@ import math
 
 
 class DimSpec:
-	def __init__(self, min=None, max=None, shape=(1,), **kwargs):
+	def __init__(self, min=None, max=None, shape=(1,), dtype=None, **kwargs):
 		
 		if isinstance(shape, int):
 			shape = (shape,)
@@ -24,8 +24,9 @@ class DimSpec:
 		super().__init__(**kwargs)
 		
 		self._shape = shape
-		self._min = min
-		self._max = max
+		self.min = min
+		self.max = max
+		self.dtype = dtype
 	
 	def __str__(self):
 		return f'{self.__class__.__name__}'
@@ -59,10 +60,16 @@ class DimSpec:
 	@property
 	def min(self):
 		return self._min
+	@min.setter
+	def min(self, val):
+		self._min = val if val is None else torch.as_tensor(val)
 	
 	@property
 	def max(self):
 		return self._max
+	@max.setter
+	def max(self, val):
+		self._max = val if val is None else torch.as_tensor(val)
 	
 	@property
 	def range(self):
@@ -86,7 +93,7 @@ class DimSpec:
 		raise NotImplementedError
 
 
-class DenseDim(DimSpec):
+class ContinuousDim(DimSpec):
 	
 	def sample(self, N=None, gen=None, seed=None):
 		
@@ -107,7 +114,7 @@ class DenseDim(DimSpec):
 		return torch.randn(*shape, generator=generator)
 
 
-class HalfBoundDim(DenseDim):
+class HalfBoundDim(ContinuousDim):
 	def __init__(self, bound=0, side='lower', bound_type='exp', epsilon=1e-10,
 	             min=None, max=None, **kwargs):
 		
@@ -119,10 +126,6 @@ class HalfBoundDim(DenseDim):
 				min = bound
 			else:
 				max = bound
-		if min is not None:
-			min = torch.as_tensor(min)
-		if max is not None:
-			max = torch.as_tensor(max)
 		assert max is None or min is None, f'Too many bounds specified: min={min}, max={max}'
 		assert bound_type in {'exp', 'soft', 'chi', 'abs'}
 		if bound_type in {'chi', 'abs'}:
@@ -170,9 +173,9 @@ class HalfBoundDim(DenseDim):
 		return vals
 
 
-class BoundDim(DenseDim):
+class BoundDim(ContinuousDim):
 	def __init__(self, min=0., max=1., epsilon=1e-10, **kwargs):
-		super().__init__(min=torch.as_tensor(min), max=torch.as_tensor(max), **kwargs)
+		super().__init__(min=min, max=max, **kwargs)
 		assert self.min is not None, f'No lower bound provided'
 		assert self.max is not None, f'No upper bound provided'
 		
@@ -196,7 +199,7 @@ class BoundDim(DenseDim):
 		return super().difference(x, y, standardize=standardize) * (self.range.unsqueeze(0) ** float(not standardize))
 
 
-class UnboundDim(DenseDim):
+class UnboundDim(ContinuousDim):
 	def __init__(self, min=None, max=None, **kwargs):
 		super().__init__(min=None, max=None, **kwargs)
 	
@@ -249,18 +252,7 @@ class PeriodicDim(BoundDim):
 
 
 class MultiDimSpace(DimSpec):
-	def __init__(self, channels, shape=None, channel_first=False, **kwargs):
-		if isinstance(shape, int):
-			shape = (shape,)
-		
-		size = shape
-		shape = (channels,) if shape is None else (
-			(channels, *shape) if channel_first else (*shape, channels))
-		
-		super().__init__(shape=shape, **kwargs)
-		self.channel_first = channel_first
-		self.size = size
-		self.channels = channels
+	pass
 
 
 class SimplexSpace(MultiDimSpace, BoundDim):
@@ -314,8 +306,18 @@ class SphericalSpace(MultiDimSpace, UnboundDim):
 
 
 class SpatialSpace(MultiDimSpace):
-	def __init__(self, channels, size, **kwargs):
+	def __init__(self, channels, *size, shape=None, channel_first=False, **kwargs):
+		if isinstance(size, int):
+			size = (size,)
+
+		size = shape
+		shape = (channels,) if size is None else (
+			(channels, *size) if channel_first else (*size, channels))
+
 		super().__init__(shape=shape, **kwargs)
+		self.channel_first = channel_first
+		self.size = size
+		self.channels = channels
 
 
 class SequenceSpace(SpatialSpace):
@@ -332,7 +334,11 @@ class ImageSpace(SpatialSpace):
 
 
 class PixelSpace(BoundDim, ImageSpace):
-	pass
+	def __init__(self, channels=1, height=None, width=None, as_bytes=False, min=None, max=None, **kwargs):
+		min, max = (0, 255) if as_bytes else (0., 1.)
+		dtype = 'byte' if as_bytes else 'float'
+		super().__init__(channels=channels, height=height, width=width, min=min, max=max, dtype=dtype, **kwargs)
+		self._as_bytes = as_bytes
 
 
 class VolumeSpace(SpatialSpace):
@@ -412,7 +418,7 @@ class JointSpace(DimSpec):
 		
 		self._expanded_shape = expanded_shape
 		self.dims = dims
-		self._is_dense = any(1 for dim in dims if isinstance(dim, DenseDim))
+		self._is_dense = any(1 for dim in dims if isinstance(dim, ContinuousDim))
 	
 	def __str__(self):
 		contents = ', '.join(str(x) for x in self.dims)
