@@ -109,6 +109,9 @@ class Loadable(Device):
 
 
 
+
+
+
 # class Downloadable: # TODO
 # 	pass
 

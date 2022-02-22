@@ -219,10 +219,13 @@ class DataCollection(base.Buffer):
 			sample = base.TensorList(sample)
 		elif isinstance(sample_format, (dict, set)):
 			sample = base.TensorDict(**sample)
-		
+		else:
+			sample.space = self.get_space(sample_format)
 		sample.sample_format = sample_format
 		sample.sel = sel
-		sample.device = device
+		# sample.device = device
+		if sel is not None:
+			sample.num_samples = len(sel)
 		return sample
 
 

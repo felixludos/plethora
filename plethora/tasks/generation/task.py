@@ -23,7 +23,10 @@ class AccumulationContainer(ResultsContainer):
 
 class AbstractGenerationTask(Task):
 	@classmethod
-	def run(cls, batch, info, **kwargs):
+	def run(cls, info, **kwargs):
+		
+		
+		
 		info.clear()
 		info.set_batch(batch)
 		cls._generate(info)
@@ -39,6 +42,17 @@ class AbstractGenerationTask(Task):
 	@staticmethod
 	def _eval_samples(info):
 		raise NotImplementedError
+
+
+
+class DatasetGenerationTask(BatchedTask):
+	
+	@staticmethod
+	def run_step(batch, info, slim=False, online=False, seed=None, gen=None):
+		
+		pass
+	
+	pass
 
 
 
