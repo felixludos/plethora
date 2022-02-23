@@ -25,11 +25,9 @@ class AbstractGenerationTask(Task):
 	@classmethod
 	def run(cls, info, **kwargs):
 		
-		
-		
-		info.clear()
-		info.set_batch(batch)
-		cls._generate(info)
+
+
+		cls._generate_batch(info)
 		cls._eval_samples(info)
 		return info
 

@@ -1,9 +1,9 @@
 import math
 import torch
-
+from h5py import hf
 from omnibelt import unspecified_argument, duplicate_instance
 
-from ..framework import base
+from ..framework import base, Fileable
 
 
 
@@ -51,6 +51,21 @@ class TensorBuffer(base.FixedBuffer):
 	def _update(self, indices=None, **kwargs):
 		if indices is not None:
 			self.data = self.data[indices]
+
+
+
+class HDFBuffer(base.FixedBuffer):
+	def __init__(self, dataset_name=None, path=None, **kwargs):
+		super().__init__(**kwargs)
+		self.path = path
+		self.key_name = dataset_name
+
+
+
+class LoadableHDFBuffer(HDFBuffer, TensorBuffer):
+	def __init__(self):
+		pass
+	pass
 
 
 
@@ -119,14 +134,16 @@ class WrappedBuffer(TensorBuffer):
 
 
 class DataCollection(base.Buffer):
+	name = None
 	sample_format = None
 	
-	def __init__(self, *, sample_format=unspecified_argument, batch_device=unspecified_argument, mode=None,
+	def __init__(self, *, name=None, sample_format=None, batch_device=unspecified_argument, mode=None,
 	             buffers=None, modes=None, space=None, **kwargs):
 		super().__init__(space=None, **kwargs)
-		if sample_format is unspecified_argument:
-			sample_format = self.sample_format
-		self.set_sample_format(sample_format)
+		if self.name is None or name is not None:
+			self.name = name
+		if self.sample_format is None or sample_format is not None:
+			self.set_sample_format(sample_format)
 
 		if batch_device is unspecified_argument:
 			batch_device = None
@@ -144,12 +161,17 @@ class DataCollection(base.Buffer):
 		self._modes = modes
 
 
+	def get_name(self):
+		return self.__class__.__name__ if self.name is None else self.name
+
+
 	def __str__(self):
-		return f'{self.__class__.__name__}'
+		return self.get_name()
 
 
 	def __repr__(self):
-		return str(self)
+		name = '' if self.name is None else self.name
+		return f'{self.__class__.__name__}({name})'
 
 
 	def copy(self):
@@ -159,14 +181,21 @@ class DataCollection(base.Buffer):
 		return new
 
 
-	@staticmethod
-	def _default_buffer_factory(name, **kwargs):
-		raise NotImplementedError
+	_default_buffer_type = None
+	@classmethod
+	def _default_buffer_factory(cls, name, buffer_type=None, **kwargs):
+		if buffer_type is None:
+			buffer_type = cls._default_buffer_type
+		return buffer_type(name, **kwargs)
 
 
-	def register_buffer(self, name, buffer=None, space=unspecified_argument, **kwargs):
+	def register_buffer(self, name, buffer=None, space=unspecified_argument, buffer_type=None, **kwargs):
 		if not isinstance(buffer, base.Buffer):
-			buffer = self._default_buffer_factory(name, data=buffer, **kwargs)
+			if buffer_type is None and issubclass(buffer, base.Buffer):
+				buffer_type = buffer
+			elif 'data' not in kwargs and buffer is not None:
+				kwargs['data'] = buffer
+			buffer = self._default_buffer_factory(name, buffer_type=buffer_type, **kwargs)
 		if space is not unspecified_argument:
 			buffer.set_space(space)
 		self.buffers[name] = buffer
@@ -347,9 +376,7 @@ class Dataset(DataCollection, base.FixedBuffer):
 		return self._batch_size
 
 
-	@staticmethod
-	def _default_buffer_factory(name, **kwargs):
-		return TensorBuffer(**kwargs)
+	_default_buffer_type = TensorBuffer
 
 
 	@staticmethod
@@ -730,6 +757,64 @@ class SyntheticDataset(LabeledDataset):
 # Synthetic means the mapping is known (and available, usually only for evaluation)
 # TODO: separate labels and mechanisms
 
+
+
+class SourcedDataset(DataCollection, Fileable):
+	@classmethod
+	def _infer_root(cls, root=None):
+		return super()._infer_root(root=root) / 'datasets'
+
+
+	def get_root(self):
+		root = super().get_root() / self.get_name()
+		os.makedirs(str(root), exist_ok=True)
+		return root
+
+
+	_default_hdf_buffer_type = None
+	def register_hdf_buffer(self, name, dataset_name, file_name=None, root=None, **kwargs):
+		if root is None:
+			root = self.get_root()
+
+		*other, dataset_name = dataset_name.split('.')
+		if file_name is None:
+			file_name = '.'.join(other) if len(other) else 'aux'
+
+		path = root / f'{file_name}.h5'
+		return self.register_buffer(name, buffer_type= path=path)
+
+
+
+	def register_buffer(self, name, buffer=None, space=unspecified_argument, buffer_type=None, **kwargs):
+		if not isinstance(buffer, base.Buffer):
+			if buffer_type is None and issubclass(buffer, base.Buffer):
+				buffer_type = buffer
+			elif 'data' not in kwargs and buffer is not None:
+				kwargs['data'] = buffer
+			buffer = self._default_buffer_factory(name, buffer_type=buffer_type, **kwargs)
+		if space is not unspecified_argument:
+			buffer.set_space(space)
+		self.buffers[name] = buffer
+		return self.buffers[name]
+
+
+
+
+
+class ImageDataset(ObservationDataset, SourcedDataset):
+	# def __init__(self, **kwargs):
+	# 	pass
+
+	@classmethod
+	def download(cls, **kwargs):
+		raise NotImplementedError
+
+
+	@classmethod
+	def _default_buffer_factory(cls, ):
+
+
+	pass
 
 
 

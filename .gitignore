@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+local_data/
 plethora/community/
 
 # C extensions

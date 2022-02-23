@@ -1,3 +1,5 @@
+import os
+from pathlib import Path
 import torch
 from omnibelt import unspecified_argument
 
@@ -109,8 +111,23 @@ class Loadable(Device):
 
 
 
+class Fileable:
+	def __init__(self, root=None, **kwargs):
+		super().__init__(**kwargs)
+		self._root = root
 
 
+	@staticmethod
+	def _infer_root(root=None):
+		if root is None:
+			root = os.getenv('PLETHORA_PATH', 'local_data/')
+		root = Path(root)
+		os.makedirs(str(root), exist_ok=True)
+		return root
+
+
+	def get_root(self):
+		return self._infer_root(self._root)
 
 # class Downloadable: # TODO
 # 	pass

@@ -1,5 +1,5 @@
 import torch
-from omnibelt import unspecified_argument
+from omnibelt import unspecified_argument, Packable
 import omnifig as fig
 
 import math
@@ -15,7 +15,7 @@ import math
 # TODO: include dtypes
 
 
-class DimSpec:
+class DimSpec(Packable):
 	def __init__(self, min=None, max=None, shape=(1,), dtype=None, **kwargs):
 		
 		if isinstance(shape, int):
@@ -91,6 +91,7 @@ class DimSpec:
 	
 	def unstandardize(self, vals):
 		raise NotImplementedError
+
 
 
 class ContinuousDim(DimSpec):
@@ -334,11 +335,11 @@ class ImageSpace(SpatialSpace):
 
 
 class PixelSpace(BoundDim, ImageSpace):
-	def __init__(self, channels=1, height=None, width=None, as_bytes=False, min=None, max=None, **kwargs):
+	def __init__(self, channels=1, height=None, width=None, as_bytes=True, min=None, max=None, **kwargs):
 		min, max = (0, 255) if as_bytes else (0., 1.)
 		dtype = 'byte' if as_bytes else 'float'
 		super().__init__(channels=channels, height=height, width=width, min=min, max=max, dtype=dtype, **kwargs)
-		self._as_bytes = as_bytes
+		self.as_bytes = as_bytes
 
 
 class VolumeSpace(SpatialSpace):
@@ -351,10 +352,16 @@ class VolumeSpace(SpatialSpace):
 
 class CategoricalDim(DimSpec):
 	def __init__(self, n, **kwargs):
+		if isinstance(n, (list, tuple)):
+			n, values = len(n), n
+		else:
+			assert isinstance(n, int), f'bad: {n}'
+			n, values = n, list(range(n))
 		super().__init__(min=torch.as_tensor(0), max=torch.as_tensor(n - 1), **kwargs)
 		self._min = self._min.long()
 		self._max = self._max.long()
 		self.n = n
+		self.values = values
 	
 	def __str__(self):
 		return f'Categorical({self.n})'
