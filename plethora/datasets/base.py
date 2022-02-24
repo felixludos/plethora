@@ -1,11 +1,9 @@
 import math
 import torch
-from h5py import hf
 from omnibelt import unspecified_argument, duplicate_instance
 
 from ..framework import base, Fileable
-
-
+from .buffers import TensorBuffer, WrappedBuffer
 
 class MissingModeError(Exception):
 	pass
@@ -14,122 +12,6 @@ class MissingModeError(Exception):
 
 class BufferNotFoundError(Exception):
 	pass
-
-
-
-class TensorBuffer(base.FixedBuffer):
-	def __init__(self, data=None, **kwargs):
-		super().__init__(**kwargs)
-		self.data = None
-		self.set_data(data)
-
-
-	def set_data(self, data=None):
-		# self.device = None if data is None else data.device
-		self.register_children(data=data)
-
-
-	def is_loaded(self):
-		return self.data is not None
-
-
-	def _count(self):
-		return len(self.data)
-
-
-	def _load(self):
-		pass
-
-
-	def _get(self, indices=None, device=None, **kwargs):
-		sample = self.data if indices is None else self.data[indices]
-		if device is not None:
-			sample = sample.to(device)
-		return sample
-
-
-	def _update(self, indices=None, **kwargs):
-		if indices is not None:
-			self.data = self.data[indices]
-
-
-
-class HDFBuffer(base.FixedBuffer):
-	def __init__(self, dataset_name=None, path=None, **kwargs):
-		super().__init__(**kwargs)
-		self.path = path
-		self.key_name = dataset_name
-
-
-
-class LoadableHDFBuffer(HDFBuffer, TensorBuffer):
-	def __init__(self):
-		pass
-	pass
-
-
-
-class WrappedBuffer(TensorBuffer):
-	def __init__(self, source=None, indices=None, space=None, data=None, **kwargs):
-		super().__init__(space=None, data=None, **kwargs)
-		self.source, self.indices = None, None
-		self.register_children(source=source, indices=indices)
-		self.set_source(source)
-
-	def is_loaded(self):
-		return (self.source is not None and self.source.is_loaded()) or (self.source is None and super().is_loaded())
-
-	def _count(self):
-		if self.indices is None:
-			return (self.source is not None and len(self.source)) or (self.source is None and super()._count())
-		return len(self.indices)
-
-
-	def unwrap(self, **kwargs):
-		if self.is_loaded() and self.source is not None:
-			self.set_data(self._get(self.indices, device=self.device, **kwargs))
-			self.indices = None
-			self.set_space(self.get_space())
-			self._loaded = self.source._loaded
-			self.set_source()
-			return
-		raise base.NotLoadedError(self)
-
-
-	def merge(self, new_instance=None):
-		raise NotImplementedError
-
-
-	@staticmethod
-	def stack(*datasets): # TODO: append these
-		raise NotImplementedError
-
-
-	def set_source(self, source=None):
-		self.source = source
-
-
-	def get_space(self):
-		if self.space is None:
-			return self.source.get_space()
-		return self.space
-
-
-	def _load(self, *args, **kwargs):
-		pass
-
-
-	def _update(self, indices=None, **kwargs):
-		if self.source is None:
-			super()._update(indices, **kwargs)
-
-
-	def _get(self, indices=None, device=None, **kwargs):
-		if self.source is None:
-			return super()._get(indices, device=device, **kwargs)
-		if self.indices is not None:
-			indices = self.indices if indices is None else self.indices[indices]
-		return self.source.get(indices, device=device, **kwargs)
 
 
 
@@ -166,12 +48,15 @@ class DataCollection(base.Buffer):
 
 
 	def __str__(self):
-		return self.get_name()
+		# return self.get_name()
+		name = '' #if self.name is None else '{' + self.name + '}'
+		return f'{self.__class__.__name__}{name}<{self.mode}>'
 
 
 	def __repr__(self):
-		name = '' if self.name is None else self.name
-		return f'{self.__class__.__name__}({name})'
+		return str(self)
+		# name = '' if self.name is None else self.name
+		# return f'{self.__class__.__name__}({name})'
 
 
 	def copy(self):
@@ -329,10 +214,6 @@ class DataCollection(base.Buffer):
 		raise NotImplementedError
 
 
-	# def batch(self, N=None):
-	# 	raise NotImplementedError
-
-
 	def register_modes(self, **modes):
 		for name, mode in modes.items():
 			mode._mode = name
@@ -364,8 +245,10 @@ class Dataset(DataCollection, base.FixedBuffer):
 		self._batch_device = batch_device
 		self._infinite = infinite
 
+		self._subset_src = None
 		self._waiting_subset = None
 		self._subset_indices = None
+
 
 	def __str__(self):
 		return f'{self.__class__.__name__}<{self.mode}>[{len(self)}]'
@@ -423,22 +306,42 @@ class Dataset(DataCollection, base.FixedBuffer):
 		return part1, part2
 
 
-	@staticmethod
-	def _wrap_buffer(source, indices=None, **kwargs):
-		return WrappedBuffer(source, indices=indices, **kwargs)
+	_default_wrapper_type = WrappedBuffer
+	@classmethod
+	def _wrap_buffer(cls, source, indices=None, wrapper_type=None, **kwargs):
+		if wrapper_type is None:
+			wrapper_type = cls._default_wrapper_type
+		return wrapper_type(source, indices=indices, **kwargs)
 
 
-	def subset(self, cut=None, indices=None, shuffle=False):
+	@property
+	def is_subset(self):
+		return self._subset_src is not None
+
+
+	def get_subset_src(self, recursive=True):
+		if self._subset_src is None:
+			return self
+		return self._subset_src.get_subset_src(recursive=recursive) if recursive else self._subset_src
+
+
+	def subset(self, cut=None, indices=None, shuffle=False, src_ref=True):
 		if indices is None:
 			indices, _ = self._split_indices(indices=self.shuffle_indices(len(self), gen=self.gen)
 										  if shuffle else torch.arange(len(self)), cut=cut)
 		new = self.copy()
+		if src_ref:
+			new._subset_src = self
 		new._default_len = len(indices)
 		for name, buffer in self.buffers.items():
 			new.register_buffer(name, self._wrap_buffer(buffer, indices))
 		if self.mode is not None:
 			self.register_modes(**{self.mode: new})
 		return new
+
+
+	def get_batch(self, **kwargs):
+		return next(self.get_iterator(**kwargs))
 
 
 	def get_iterator(self, sample_format=unspecified_argument, device=unspecified_argument, sample_kwargs={},
@@ -781,7 +684,7 @@ class SourcedDataset(DataCollection, Fileable):
 			file_name = '.'.join(other) if len(other) else 'aux'
 
 		path = root / f'{file_name}.h5'
-		return self.register_buffer(name, buffer_type= path=path)
+		# return self.register_buffer(name, buffer_type= path=path)
 
 
 
@@ -814,7 +717,7 @@ class ImageDataset(ObservationDataset, SourcedDataset):
 	def _default_buffer_factory(cls, ):
 
 
-	pass
+		pass
 
 
 

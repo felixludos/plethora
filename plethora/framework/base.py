@@ -21,7 +21,7 @@ class NotLoadedError(Exception):
 
 class Buffer(BufferTransform, Loadable, DeviceContainer, Seeded):
 	space = None
-	
+
 	def __init__(self, space=unspecified_argument, transforms=None, default_len=None, **kwargs):
 		super().__init__(**kwargs)
 		if space is unspecified_argument:
@@ -81,7 +81,7 @@ class Buffer(BufferTransform, Loadable, DeviceContainer, Seeded):
 	def _get(self, sel=None, device=None, **kwargs):
 		raise NotImplementedError
 
-	
+
 	def get(self, sel=None, device=None, **kwargs):
 		if not self.is_loaded():
 			raise NotLoadedError(self)
@@ -127,7 +127,7 @@ class FixedBuffer(Buffer): # fixed number of samples (possibly not known until a
 			try:
 				self._load_indices(indices=self._waiting_update, **kwargs)
 			except NotImplementedError:
-				self._load(**kwargs)
+				pass # _load + _update will be called in super().load
 			else:
 				self._waiting_update = None
 		return super().load(**kwargs)
