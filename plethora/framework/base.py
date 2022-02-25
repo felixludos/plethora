@@ -1,4 +1,4 @@
-
+from collections import OrderedDict
 from omnibelt import unspecified_argument, duplicate_instance
 
 from .features import Device, DeviceContainer, Loadable, Seeded
@@ -26,7 +26,7 @@ class Buffer(BufferTransform, Loadable, DeviceContainer, Seeded):
 		super().__init__(**kwargs)
 		if space is unspecified_argument:
 			space = self.space
-		if transforms in None:
+		if transforms is None:
 			transforms = []
 		self.space = space
 		self.transforms = transforms
@@ -85,47 +85,47 @@ class Buffer(BufferTransform, Loadable, DeviceContainer, Seeded):
 	def get(self, sel=None, device=None, **kwargs):
 		if not self.is_loaded():
 			raise NotLoadedError(self)
-		sample = self._get(sel, device=device, **kwargs)
+		sample = self._get(sel=sel, device=device, **kwargs)
 		return self.transform(sample)
 
 
 
 class FixedBuffer(Buffer): # fixed number of samples (possibly not known until after loading)
 
-	def _get(self, indices=None, device=None, **kwargs):
-		return super()._get(indices, device=device, **kwargs)
+	# def _get(self, indices=None, device=None, **kwargs):
+	# 	return super()._get(indices, device=device, **kwargs)
+	#
+	#
+	# def get(self, indices=None, device=None, **kwargs):
+	# 	return super().get(indices, device=device, **kwargs)
 
 
-	def get(self, indices=None, device=None, **kwargs):
-		return super().get(indices, device=device, **kwargs)
-
-
-	def _update(self, indices=None, **kwargs):
+	def _update(self, sel=None, **kwargs):
 		raise NotImplementedError
 
 
-	def _store_update(self, indices=None, **kwargs):
-		if self._waiting_update is not None and indices is not None:
-			indices = self._waiting_update[indices]
-		return indices
+	def _store_update(self, sel=None, **kwargs):
+		if self._waiting_update is not None and sel is not None:
+			sel = self._waiting_update[sel]
+		return sel
 
 
-	def _apply_update(self, indices, **kwargs):
-		return super()._apply_update(dict(indices=indices, **kwargs))
+	def _apply_update(self, sel, **kwargs):
+		return super()._apply_update(dict(sel=sel, **kwargs))
 
 
-	def _load_indices(self, indices=None, **kwargs):
+	def _load_sel(self, sel=None, **kwargs):
 		raise NotImplementedError
 
 
 	def _load(self, **kwargs):
-		return self._load_indices(**kwargs)
+		return self._load_sel(**kwargs)
 
 
 	def load(self, **kwargs):
 		if not self.is_loaded() and self._waiting_update is not None:
 			try:
-				self._load_indices(indices=self._waiting_update, **kwargs)
+				self._load_sel(sel=self._waiting_update, **kwargs)
 			except NotImplementedError:
 				pass # _load + _update will be called in super().load
 			else:
@@ -177,47 +177,91 @@ class Function(Device):
 		return self.din, self.dout
 	
 
-class TensorContainer(Device):
 
-	def _item_iterator(self):
-		raise NotImplementedError
-
-
-	def _update_payload(self, updates):
-		for key, content in updates.items():
-			self[key] = content
+class Container(Device, OrderedDict):
+	def _find_missing(self, key):
+		raise KeyError(key)
 
 
 	def _to(self, device, **kwargs):
-		updates = {key: content.to(device) for key, content in self._item_iterator()}
-		self._update_payload(updates)
+		for key, val in self.items():
+			if isinstance(val, (Device, torch.Tensor)):
+				self[key] = val.to(device)
+
+
+	def _package(self, data):
+		return data
+
+
+	def get(self, key, default=None):
+		try:
+			val = self[key]
+		except KeyError:
+			return default
+		return self._package(val)
+
+
+	def __getitem__(self, item):
+		if item not in self:
+			return self._find_missing(item)
+		return super().__getitem__(item)
+
+
+	def export(self):
+		raise NotImplementedError
 
 
 	def __str__(self):
-		return f'{self.__class__.__name__}({self._str_info()})'
+		entries = ', '.join(self.keys())
+		return f'{self.__class__.__name__}({entries})'
+
+
+	def __repr__(self):
+		return str(self)
 
 
 
-class TensorList(TensorContainer, list):
-	def _str_info(self):
-		num = len(self)
-		msg = 'item' if num == 1 else 'items'
-		return f'{num} {msg}'
-
-
-	def _item_iterator(self):
-		return enumerate(self)
-
-
-
-class TensorDict(TensorContainer, dict):
-	def _str_info(self):
-		msg = ', '.join(self.keys())
-		return msg
-
-
-	def _item_iterator(self):
-		return self.items()
+# class TensorContainer(Device):
+#
+# 	def _item_iterator(self):
+# 		raise NotImplementedError
+#
+#
+# 	def _update_payload(self, updates):
+# 		for key, content in updates.items():
+# 			self[key] = content
+#
+#
+# 	def _to(self, device, **kwargs):
+# 		updates = {key: content.to(device) for key, content in self._item_iterator()}
+# 		self._update_payload(updates)
+#
+#
+# 	def __str__(self):
+# 		return f'{self.__class__.__name__}({self._str_info()})'
+#
+#
+#
+# class TensorList(TensorContainer, list):
+# 	def _str_info(self):
+# 		num = len(self)
+# 		msg = 'item' if num == 1 else 'items'
+# 		return f'{num} {msg}'
+#
+#
+# 	def _item_iterator(self):
+# 		return enumerate(self)
+#
+#
+#
+# class TensorDict(TensorContainer, dict):
+# 	def _str_info(self):
+# 		msg = ', '.join(self.keys())
+# 		return msg
+#
+#
+# 	def _item_iterator(self):
+# 		return self.items()
 
 
 

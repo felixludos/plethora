@@ -26,20 +26,20 @@ class TensorBuffer(base.FixedBuffer):
 		return len(self.data)
 
 
-	def _load_indices(self, indices=None, **kwargs):
+	def _load_sel(self, sel=None, **kwargs):
 		pass
 
 
-	def _get(self, indices=None, device=None, **kwargs):
-		sample = self.data if indices is None else self.data[indices]
+	def _get(self, sel=None, device=None, **kwargs):
+		sample = self.data if sel is None else self.data[sel]
 		if device is not None:
 			sample = sample.to(device)
 		return sample
 
 
-	def _update(self, indices=None, **kwargs):
-		if indices is not None:
-			self.data = self.data[indices]
+	def _update(self, sel=None, **kwargs):
+		if sel is not None:
+			self.data = self.data[sel]
 
 
 
@@ -54,33 +54,33 @@ class HDFBuffer(base.FixedBuffer):
 		self.key_name = dataset_name
 
 		self._shape = shape
-		self._sel_indices = None
-		self.register_children(_sel_indices=None)
+		self._selected = None
+		self.register_children(_selected=None)
 
 
 	def _count(self):
-		return self._shape[0] if self._sel_indices is None else len(self._sel_indices)
+		return self._shape[0] if self._selected is None else len(self._selected)
 
 
-	def _load_indices(self, indices=None, **kwargs):
+	def _load_sel(self, sel=None, **kwargs):
 		pass
 
 
-	def _update(self, indices=None, **kwargs):
-		if indices is not None:
-			self._sel_indices = indices if self._sel_indices is None else self._sel_indices[indices]
+	def _update(self, sel=None, **kwargs):
+		if sel is not None:
+			self._selected = sel if self._selected is None else self._selected[sel]
 
 
-	def _get(self, indices=None, device=None, **kwargs):
-		if indices is None:
-			indices = ()
+	def _get(self, sel=None, device=None, **kwargs):
+		if sel is None:
+			sel = ()
 		else:
-			if self._sel_indices is not None:
-				indices = self._sel_indices[indices]
-			indices = torch.as_tensor(indices).numpy()
+			if self._selected is not None:
+				sel = self._selected[sel]
+			sel = torch.as_tensor(sel).numpy()
 
 		with hf.File(str(self.path), 'r') as f:
-			sample = f[self.key_name][indices]
+			sample = f[self.key_name][sel]
 		sample = torch.as_tensor(sample)
 		if device is not None:
 			sample = sample.to(device)
@@ -89,17 +89,17 @@ class HDFBuffer(base.FixedBuffer):
 
 
 class LoadableHDFBuffer(TensorBuffer, HDFBuffer):
-	def _load_indices(self, indices=None, **kwargs):
-		data = super(TensorBuffer, self)._get(indices=indices, **kwargs)
+	def _load_sel(self, sel=None, **kwargs):
+		data = super(TensorBuffer, self)._get(sel=sel, **kwargs)
 		self.set_data(data)
 
 
 
 class WrappedBuffer(TensorBuffer):
-	def __init__(self, source=None, indices=None, space=None, data=None, **kwargs):
+	def __init__(self, source=None, sel=None, space=None, data=None, **kwargs):
 		super().__init__(space=None, data=None, **kwargs)
-		self.source, self.indices = None, None
-		self.register_children(source=source, indices=indices)
+		self.source, self.sel = None, None
+		self.register_children(source=source, sel=sel)
 		self.set_source(source)
 
 
@@ -108,15 +108,15 @@ class WrappedBuffer(TensorBuffer):
 
 
 	def _count(self):
-		if self.indices is None:
+		if self.sel is None:
 			return (self.source is not None and len(self.source)) or (self.source is None and super()._count())
-		return len(self.indices)
+		return len(self.sel)
 
 
 	def unwrap(self, **kwargs):
 		if self.is_loaded() and self.source is not None:
-			self.set_data(self._get(self.indices, device=self.device, **kwargs))
-			self.indices = None
+			self.set_data(self._get(self.sel, device=self.device, **kwargs))
+			self.sel = None
 			self.set_space(self.get_space())
 			self._loaded = self.source._loaded
 			self.set_source()
@@ -147,17 +147,17 @@ class WrappedBuffer(TensorBuffer):
 		pass
 
 
-	def _update(self, indices=None, **kwargs):
+	def _update(self, sel=None, **kwargs):
 		if self.source is None:
-			super()._update(indices, **kwargs)
+			super()._update(sel=sel, **kwargs)
 
 
-	def _get(self, indices=None, device=None, **kwargs):
+	def _get(self, sel=None, device=None, **kwargs):
 		if self.source is None:
-			return super()._get(indices, device=device, **kwargs)
-		if self.indices is not None:
-			indices = self.indices if indices is None else self.indices[indices]
-		return self.source.get(indices, device=device, **kwargs)
+			return super()._get(sel, device=device, **kwargs)
+		if self.sel is not None:
+			sel = self.sel if sel is None else self.sel[sel]
+		return self.source.get(sel, device=device, **kwargs)
 
 
 

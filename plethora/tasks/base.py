@@ -4,11 +4,11 @@ import torch
 from omnibelt import get_printer
 
 from ..framework.features import Seeded
-from ..framework.base import TensorDict
+from ..framework.base import Container
 
 prt = get_printer(__file__)
 
-class ResultsContainer(TensorDict):
+class ResultsContainer(Container):
 	def __init__(self, dataset, **kwargs):
 		super().__init__(**kwargs)
 		self.dataset = dataset

@@ -34,10 +34,10 @@ class SwissRollDataset(SyntheticDataset):
 			spaces.BoundDim(min=-Az * tmax, max=Az * tmax),
 		)
 
-		self.register_buffer('label', space=lbl_space)
+		self.register_buffer('observation', space=obs_space)
 		if self._target_theta:
 			self.register_buffer('target', space=lbl_space[0])
-		self.register_buffer('observation', space=obs_space)
+		self.register_buffer('label', space=lbl_space)
 
 
 	def _generate_noise(self, N, seed=None, gen=None):
@@ -64,9 +64,9 @@ class SwissRollDataset(SyntheticDataset):
 		lbls = self.generate_mechanism(len(self))
 
 		self.buffers['label'].set_data(lbls)
-		self.buffers['observation'].set_data(self.generate_observation_from_mechanism(lbls))
 		if self._target_theta:
 			self.buffers['target'].set_data(lbls.narrow(-1,0,1))
+		self.buffers['observation'].set_data(self.generate_observation_from_mechanism(lbls))
 
 		super()._load(*args, **kwargs)
 
@@ -97,10 +97,10 @@ class HelixDataset(SyntheticDataset):
 			spaces.BoundDim(min=-Rz, max=Rz),
 		)
 
-		self.register_buffer('label', space=lbl_space)
+		self.register_buffer('observation', space=obs_space)
 		if self._target_strand:
 			self.register_buffer('target', space=lbl_space[-1])
-		self.register_buffer('observation', space=obs_space)
+		self.register_buffer('label', space=lbl_space)
 
 
 	def _generate_noise(self, N, seed=None, gen=None):
@@ -125,9 +125,9 @@ class HelixDataset(SyntheticDataset):
 		lbls = self.generate_mechanism(len(self))
 
 		self.buffers['label'].set_data(lbls)
-		self.buffers['observation'].set_data(self.generate_observation_from_mechanism(lbls))
 		if self._target_strand:
 			self.buffers['target'].set_data(lbls.narrow(-1, 0, 1))
+		self.buffers['observation'].set_data(self.generate_observation_from_mechanism(lbls))
 
 		super()._load(*args, **kwargs)
 

@@ -1,4 +1,5 @@
 import math
+from collections import OrderedDict
 import torch
 from omnibelt import unspecified_argument, duplicate_instance
 
@@ -15,24 +16,59 @@ class BufferNotFoundError(Exception):
 
 
 
+class Batch(base.Container):
+	def __init__(self, dataset, sel=None, **kwargs):
+		super().__init__(**kwargs)
+		self.dataset = dataset
+		self.sel = sel
+
+
+	def get_available(self):
+		return list(self.dataset.buffers.keys())
+
+
+	def get_space(self, name):
+		return self.dataset.get_space(name)
+
+
+	def _find_missing(self, key, **kwargs):
+		val = self.dataset.get(key, self.sel, **kwargs)
+		if self.device is not None:
+			val = val.to(self.device)
+		self[key] = val # cache the results
+		return val
+
+
+	@property
+	def size(self):
+		return len(self.sel)
+
+
+	def __str__(self):
+		entries = list(self.keys())
+		for available in self.get_available():
+			if available not in entries:
+				entries.append('{' + available + '}')
+		entries = ', '.join(entries)
+		return f'{self.__class__.__name__}[{self.size}]({entries})'
+
+
+
 class DataCollection(base.Buffer):
 	name = None
-	sample_format = None
 	
-	def __init__(self, *, name=None, sample_format=None, batch_device=unspecified_argument, mode=None,
+	def __init__(self, *, name=None, mode=None,
 	             buffers=None, modes=None, space=None, **kwargs):
 		super().__init__(space=None, **kwargs)
 		if self.name is None or name is not None:
 			self.name = name
-		if self.sample_format is None or sample_format is not None:
-			self.set_sample_format(sample_format)
 
-		if batch_device is unspecified_argument:
-			batch_device = None
-		self.batch_device = batch_device
+		# if batch_device is unspecified_argument:
+		# 	batch_device = None
+		# self.batch_device = batch_device
 
 		if buffers is None:
-			buffers = {}
+			buffers = OrderedDict()
 		self.buffers = buffers
 
 		self._mode = mode
@@ -76,9 +112,9 @@ class DataCollection(base.Buffer):
 
 	def register_buffer(self, name, buffer=None, space=unspecified_argument, buffer_type=None, **kwargs):
 		if not isinstance(buffer, base.Buffer):
-			if buffer_type is None and issubclass(buffer, base.Buffer):
+			if buffer_type is None and type(buffer) == type and issubclass(buffer, base.Buffer):
 				buffer_type = buffer
-			elif 'data' not in kwargs and buffer is not None:
+			if isinstance(buffer, torch.Tensor):
 				kwargs['data'] = buffer
 			buffer = self._default_buffer_factory(name, buffer_type=buffer_type, **kwargs)
 		if space is not unspecified_argument:
@@ -128,90 +164,45 @@ class DataCollection(base.Buffer):
 		return name in self.buffers
 
 
-	def _process_sample(self, sample, *, sample_format, device, sel=None, **kwargs):
-		if isinstance(sample_format, (list, tuple)):
-			sample = base.TensorList(sample)
-		elif isinstance(sample_format, (dict, set)):
-			sample = base.TensorDict(**sample)
-		else:
-			sample.space = self.get_space(sample_format)
-		sample.sample_format = sample_format
-		sample.sel = sel
-		# sample.device = device
-		if sel is not None:
-			sample.num_samples = len(sel)
+	def _package_sample(self, sample, name, sel, **kwargs):
 		return sample
 
 
-	def change_sample_format(self, batch, sample_format, get_missing=True):
-		return self._process_sample(self._get_sample_format(sample_format, batch=batch, allow_loading=get_missing),
-		                            sample_format=sample_format, device=batch.device, sel=batch.sel)
-		
-	
-	def _get_sample_format(self, sample_format, sel=None, device=None, batch=None, allow_loading=True, strict=True):
-		if batch is None:
-			assert sel is not None and device is not None
-		
-		if isinstance(sample_format, str):
-			if batch is not None and sample_format in getattr(batch, 'sample_format', []):
-				old_format = getattr(batch, 'sample_format')
-				if isinstance(old_format, (list, tuple)):
-					sample = batch[old_format.index(sample_format)]
-				elif isinstance(old_format, (dict, set)):
-					sample = batch[sample_format]
-				else:
-					sample = batch
-			elif allow_loading:
-				if strict:
-					self._check_buffer_names(sample_format)
-				sample = self.buffers[sample_format].get(sel, device=device)
-			else:
-				raise BufferNotFoundError(sample_format)
-			
-		elif isinstance(sample_format, (list, tuple)):
-			sample = [self._get_sample_format(key, batch=batch, sel=sel, device=device,
-			                                  allow_loading=allow_loading, strict=strict) for key in sample_format]
-		
-		elif isinstance(sample_format, set):
-			sample = {key: self._get_sample_format(key, batch=batch, sel=sel, device=device,
-			                                       allow_loading=allow_loading, strict=strict) for key in sample_format}
-		
-		elif isinstance(sample_format, dict):
-			sample = {}
-			for key, transforms in sample_format.items():
-				x = self._get_sample_format(key, batch=batch, sel=sel, device=device,
-				                            allow_loading=allow_loading, strict=strict)
-				if transforms is not None and not isinstance(transforms, (list, tuple)):
-					transforms = [transforms]
-				for transform in transforms:
-					x = transform.transform(x)
-				sample[key] = x
-
-		else:
-			raise NotImplementedError(f'bad sample format: {sample_format}')
-		
-		return sample
+	def get(self, name, sel=None, **kwargs):
+		return super().get(sel=sel, name=name, **kwargs)
 
 
-	def _get(self, sel=None, sample_format=None, device=None, strict=True, **kwargs):
-		if sample_format is None:
-			sample_format = self.sample_format
-		if device is None:
-			device = self.batch_device
-		return self._process_sample(self._get_sample_format(sample_format, sel=sel, device=device, strict=strict),
-		                            sel=sel, sample_format=sample_format, device=device, **kwargs)
+	def _get(self, name, sel=None, **kwargs):
+		self._check_buffer_names(name)
+		sample = self.buffers[name].get(sel)
+		return self._package_sample(sample, name, sel, **kwargs)
 
 
-	def set_sample_format(self, sample_format):
-		self.sample_format = sample_format
+	_default_batch_type = Batch
+	def create_batch(self, batch_type=None, **kwargs):
+		if batch_type is None:
+			batch_type = self._default_batch_type
+		return batch_type(self, **kwargs)
 
 
-	def get_sample_format(self):
-		return self.sample_format
-
-
-	def selection_iterator(self):
+	def generate_selections(self, **kwargs):
 		raise NotImplementedError
+
+
+	def get_batch(self, **kwargs):
+		return next(self.get_iterator(**kwargs))
+
+
+	def get_iterator(self, infinite=False, **kwargs):
+		first = True
+		while first or infinite:
+			for sel in self.generate_selections(**kwargs):
+				yield self.create_batch(sel=sel)
+			first = False
+
+
+	def __iter__(self):
+		return self.get_iterator()
 
 
 	def register_modes(self, **modes):
@@ -235,12 +226,12 @@ class DataCollection(base.Buffer):
 
 	
 class Dataset(DataCollection, base.FixedBuffer):
-	def __init__(self, batch_size=64, shuffle_batches=True, drop_last=None,
+	def __init__(self, batch_size=64, shuffle_batches=True, force_batch_size=True,
 	             batch_device=None, infinite=False, **kwargs):
 		super().__init__(**kwargs)
 
 		self._batch_size = batch_size
-		self._drop_last = drop_last
+		self._force_batch_size = force_batch_size
 		self._shuffle_batches = shuffle_batches
 		self._batch_device = batch_device
 		self._infinite = infinite
@@ -277,18 +268,68 @@ class Dataset(DataCollection, base.FixedBuffer):
 			if cls._is_big_number(N) else torch.randperm(N, generator=gen)
 
 
-	def selection_iterator(self, batch_size=None, shuffle=False, drop_last=None, gen=None):
-		if gen is None:
-			gen = self.gen
+	def generate_selections(self, num_samples=None, batch_size=None, shuffle=False, force_batch_size=None, gen=None):
 		if batch_size is None:
 			batch_size = self.batch_size
-		if drop_last is None:
-			drop_last = self._drop_last
+		if force_batch_size is None:
+			force_batch_size = self._force_batch_size
+		if gen is None:
+			gen = self.gen
 		order = self.shuffle_indices(len(self), gen=gen) if shuffle else torch.arange(len(self))
-		inds = order.split(batch_size)
-		if drop_last and len(inds) > 1 and len(inds[-1]) != len(inds[0]):
+		if num_samples is not None and len(order) > num_samples:
+			order = order[:max(num_samples, batch_size) if force_batch_size else num_samples]
+		inds = list(order.split(batch_size))
+		if force_batch_size and len(inds) and len(inds[-1]) != batch_size:
 			inds.pop()
 		return inds
+
+
+	def get_iterator(self, epochs=1, num_samples=None, num_batches=None, infinite=False, hard_limit=True,
+	                 batch_size=None, shuffle=None, force_batch_size=None, gen=None, pbar=None, **kwargs):
+		if batch_size is None:
+			batch_size = self.batch_size
+		if force_batch_size is None:
+			force_batch_size = self._force_batch_size
+		if shuffle is None:
+			shuffle = self._shuffle_batches
+		if gen is None:
+			gen = self.gen
+
+		N = len(self)
+		samples_per_epoch = N - int(force_batch_size) * (N % batch_size)
+		batches_per_epoch = int(math.ceil(samples_per_epoch / batch_size))
+		if infinite is None:
+			total_samples = None
+		elif num_batches is not None:
+			total_samples = (num_batches % batches_per_epoch) * batch_size \
+			                + (num_batches // batches_per_epoch) * samples_per_epoch
+		elif num_samples is not None:
+			total_samples = num_samples - int(force_batch_size or hard_limit) * (num_samples % batch_size) \
+			                + int(not hard_limit and num_samples % batch_size > 0) * batch_size
+		else:
+			total_samples = samples_per_epoch * epochs
+		print(total_samples)
+		if pbar is not None:
+			pbar = pbar(total=total_samples)
+
+		while total_samples is None or total_samples > 0:
+			sels = self.generate_selections(num_samples=total_samples, batch_size=batch_size, shuffle=shuffle,
+			                                force_batch_size=force_batch_size, gen=gen, **kwargs)
+
+
+			for sel in sels:
+				N = len(sel)
+				if total_samples is not None:
+					total_samples -= N
+					if hard_limit and total_samples < 0:
+						break
+				if pbar is not None:
+					pbar.update(N)
+				yield self.create_batch(sel=sel)
+				if total_samples is not None and total_samples <= 0:
+					break
+		if pbar is not None:
+			pbar.close()
 
 
 	@staticmethod
@@ -308,10 +349,10 @@ class Dataset(DataCollection, base.FixedBuffer):
 
 	_default_wrapper_type = WrappedBuffer
 	@classmethod
-	def _wrap_buffer(cls, source, indices=None, wrapper_type=None, **kwargs):
+	def _wrap_buffer(cls, source, sel=None, wrapper_type=None, **kwargs):
 		if wrapper_type is None:
 			wrapper_type = cls._default_wrapper_type
-		return wrapper_type(source, indices=indices, **kwargs)
+		return wrapper_type(source, sel=sel, **kwargs)
 
 
 	@property
@@ -334,39 +375,10 @@ class Dataset(DataCollection, base.FixedBuffer):
 			new._subset_src = self
 		new._default_len = len(indices)
 		for name, buffer in self.buffers.items():
-			new.register_buffer(name, self._wrap_buffer(buffer, indices))
+			new.register_buffer(name, self._wrap_buffer(buffer, sel=indices))
 		if self.mode is not None:
 			self.register_modes(**{self.mode: new})
 		return new
-
-
-	def get_batch(self, **kwargs):
-		return next(self.get_iterator(**kwargs))
-
-
-	def get_iterator(self, sample_format=unspecified_argument, device=unspecified_argument, sample_kwargs={},
-	                 infinite=None, drop_last=None, gen=None,
-	                 batch_size=None, shuffle=None, **kwargs):
-		if sample_format is unspecified_argument:
-			sample_format = self.sample_format
-		if device is unspecified_argument:
-			device = self.batch_device
-		if infinite is None:
-			infinite = self._infinite
-		if drop_last is None:
-			drop_last = self._drop_last
-		if batch_size is None:
-			batch_size = self.batch_size
-		if shuffle is None:
-			shuffle = self._shuffle_batches
-		return _DatasetIterator(self, infinite=infinite, drop_last=drop_last,
-		                        sample_format=sample_format, device=device, sample_kwargs=sample_kwargs,
-		                        batch_size=batch_size, shuffle=shuffle, gen=gen,
-		                        **kwargs)
-
-
-	def __iter__(self):
-		return self.get_iterator()
 
 
 	def _count(self):
@@ -430,81 +442,7 @@ class Dataset(DataCollection, base.FixedBuffer):
 
 
 
-class DataGenerator(DataCollection): # TODO: batches are specified by number of samples, not a list of indicies
-
-	def __iter__(self):
-		raise NotImplementedError
-
-
-	def __next__(self):
-		raise NotImplementedError
-
-
-
-class _DatasetIterator: # TODO: pbar integration
-	def __init__(self, dataset, infinite=False, drop_last=False,
-	             sample_format=None, device=None, sample_kwargs={},
-	             batch_size=None, shuffle=True, seed=None, gen=None,
-	             **kwargs):
-		super().__init__(**kwargs)
-		self._dataset = dataset
-
-		if seed is not None:
-			gen = torch.Generator().manual_seed(seed)
-		self._gen = gen
-
-		self._device = device
-		self._sample_format = sample_format
-		self._sample_kwargs = sample_kwargs
-
-		self._batch_size = batch_size
-		self._infinite = infinite
-		self._drop_last = drop_last
-		self._shuffle = shuffle
-
-		self._selections = self.generate_selections()
-
-
-	def generate_selections(self):
-		selections = self._dataset.selection_iterator(batch_size=self._batch_size, shuffle=self._shuffle,
-		                                              drop_last=self._drop_last, gen=self._gen)
-		self._epoch_len = len(selections)
-		selections = list(reversed(selections))
-		return selections
-
-
-	def __iter__(self):
-		return self
-
-
-	def __len__(self):
-		return self._epoch_len
-
-
-	def remaining(self):
-		return len(self._selections)
-
-
-	def __next__(self):
-		if len(self._selections) == 0:
-			if not self._infinite:
-				raise StopIteration
-			self._selections = self.generate_selections()
-		sel = self._selections.pop()
-		return self._dataset.get(sel, device=self._device, sample_format=self._sample_format,
-		                         **self._sample_kwargs)
-
-
-
-class _DatagenIterator:
-	def __init__(self):
-		raise NotImplementedError
-
-
-
 class ObservationDataset(Dataset):
-	sample_format = 'observation'
-
 	@property
 	def din(self):
 		return self.get_observation_space()
@@ -514,8 +452,8 @@ class ObservationDataset(Dataset):
 		return self.get_space('observation')
 
 
-	def get_observation(self, indices=None, **kwargs):
-		return self.get(indices=indices, sample_format='observation', **kwargs)
+	def get_observation(self, sel=None, **kwargs):
+		return self.get('observation', sel=sel, **kwargs)
 
 
 	def _load(self, *args, **kwargs):
@@ -533,9 +471,6 @@ class ObservationDataset(Dataset):
 
 
 class SupervisedDataset(ObservationDataset):
-	sample_format = ('observation', 'target')
-
-
 	@property
 	def dout(self):
 		return self.get_target_space()
@@ -545,8 +480,8 @@ class SupervisedDataset(ObservationDataset):
 		return self.get_space('target')
 
 
-	def get_target(self, indices=None, **kwargs):
-		return self.get(indices=indices, sample_format='target', **kwargs)
+	def get_target(self, sel=None, **kwargs):
+		return self.get('target', sel=sel, **kwargs)
 
 
 	def _load(self, *args, **kwargs):
@@ -559,15 +494,12 @@ class SupervisedDataset(ObservationDataset):
 
 
 class LabeledDataset(SupervisedDataset):
-	sample_format = ('observation', 'label')
-
-
 	def get_label_space(self):
 		return self.get_space('label')
 
 
-	def get_label(self, indices=None, **kwargs):
-		return self.get(indices=indices, sample_format='label', **kwargs)
+	def get_label(self, sel=None, **kwargs):
+		return self.get('label', sel=sel, **kwargs)
 
 
 	def _load(self, *args, **kwargs):
@@ -688,17 +620,17 @@ class SourcedDataset(DataCollection, Fileable):
 
 
 
-	def register_buffer(self, name, buffer=None, space=unspecified_argument, buffer_type=None, **kwargs):
-		if not isinstance(buffer, base.Buffer):
-			if buffer_type is None and issubclass(buffer, base.Buffer):
-				buffer_type = buffer
-			elif 'data' not in kwargs and buffer is not None:
-				kwargs['data'] = buffer
-			buffer = self._default_buffer_factory(name, buffer_type=buffer_type, **kwargs)
-		if space is not unspecified_argument:
-			buffer.set_space(space)
-		self.buffers[name] = buffer
-		return self.buffers[name]
+	# def register_buffer(self, name, buffer=None, space=unspecified_argument, buffer_type=None, **kwargs):
+	# 	if not isinstance(buffer, base.Buffer):
+	# 		if buffer_type is None and issubclass(buffer, base.Buffer):
+	# 			buffer_type = buffer
+	# 		elif 'data' not in kwargs and buffer is not None:
+	# 			kwargs['data'] = buffer
+	# 		buffer = self._default_buffer_factory(name, buffer_type=buffer_type, **kwargs)
+	# 	if space is not unspecified_argument:
+	# 		buffer.set_space(space)
+	# 	self.buffers[name] = buffer
+	# 	return self.buffers[name]
 
 
 
