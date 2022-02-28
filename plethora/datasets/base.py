@@ -16,23 +16,170 @@ class BufferNotFoundError(Exception):
 
 
 
-class Batch(base.Container):
-	def __init__(self, dataset, sel=None, **kwargs):
+class Iterable:
+	def get_iterator(self, infinite=False, **kwargs):
+		first = True
+		while first or infinite:
+			for sel in self.generate_selections(**kwargs):
+				yield self.create_batch(sel=sel)
+			first = False
+
+
+	def __iter__(self):
+		return self.get_iterator()
+
+
+	def get_batch(self, **kwargs):
+		return next(self.get_iterator(**kwargs))
+
+
+	def __next__(self):
+		return self.get_batch()
+
+
+	def generate_selections(self, **kwargs):
+		raise NotImplementedError
+
+
+	def create_batch(self, sel=None, **kwargs):
+		raise NotImplementedError
+	
+
+
+class Batchable(Iterable, base.Seeded):
+	def __init__(self, batch_size=64, shuffle_batches=True, force_batch_size=True,
+	             batch_device=None, infinite=False, **kwargs):
 		super().__init__(**kwargs)
-		self.dataset = dataset
+
+		self._batch_size = batch_size
+		self._force_batch_size = force_batch_size
+		self._shuffle_batches = shuffle_batches
+		self._batch_device = batch_device
+		self._infinite = infinite
+
+
+	def get_batch(self, shuffle=None, **kwargs):
+		if shuffle is None:
+			shuffle = True
+		return next(self.get_iterator(shuffle=shuffle, **kwargs))
+
+
+	@property
+	def batch_size(self):
+		return self._batch_size
+
+
+	@staticmethod
+	def _is_big_number(N):
+		return N > 10000000
+	
+	
+	@classmethod
+	def shuffle_indices(cls, N, gen=None):
+		# if seed is not None and gen is None:
+		# 	gen = torch.Generator()
+		# 	gen.manual_seed(seed)
+		# TODO: include a warning if cls._is_big_number(N)
+		return torch.randint(N, size=(N,), generator=gen) \
+			if cls._is_big_number(N) else torch.randperm(N, generator=gen)
+
+
+	def generate_selections(self, sel=None, num_samples=None, batch_size=None, shuffle=False, force_batch_size=None, gen=None, **kwargs):
+		if batch_size is None:
+			batch_size = self.batch_size
+		if force_batch_size is None:
+			force_batch_size = self._force_batch_size
+		if gen is None:
+			gen = self.gen
+			
+		if sel is None:
+			sel = torch.arange(len(self))
+		if shuffle:
+			sel = sel[self.shuffle_indices(len(sel), gen=gen)]
+		order = sel
+		if num_samples is not None and len(order) > num_samples:
+			order = order[:max(num_samples, batch_size) if force_batch_size else num_samples]
+		inds = list(order.split(batch_size))
+		if force_batch_size and len(inds) and len(inds[-1]) != batch_size:
+			inds.pop()
+		return inds
+	
+
+	def get_iterator(self, epochs=1, num_samples=None, num_batches=None, infinite=False, hard_limit=True,
+	                 batch_size=None, shuffle=None, force_batch_size=None, gen=None, sel=None, pbar=None, **kwargs):
+		if batch_size is None:
+			batch_size = self.batch_size
+		if force_batch_size is None:
+			force_batch_size = self._force_batch_size
+		if shuffle is None:
+			shuffle = self._shuffle_batches
+		if gen is None:
+			gen = self.gen
+
+		N = len(self) if sel is None else len(sel)
+		samples_per_epoch = N - int(force_batch_size) * (N % batch_size)
+		batches_per_epoch = int(math.ceil(samples_per_epoch / batch_size))
+		if infinite is None:
+			total_samples = None
+		elif num_batches is not None:
+			total_samples = (num_batches % batches_per_epoch) * batch_size \
+			                + (num_batches // batches_per_epoch) * samples_per_epoch
+		elif num_samples is not None:
+			total_samples = num_samples - int(force_batch_size or hard_limit) * (num_samples % batch_size) \
+			                + int(not hard_limit and num_samples % batch_size > 0) * batch_size
+		else:
+			total_samples = samples_per_epoch * epochs
+		if pbar is not None:
+			pbar = pbar(total=total_samples)
+
+		while total_samples is None or total_samples > 0:
+			sels = self.generate_selections(sel=sel, num_samples=total_samples, batch_size=batch_size, shuffle=shuffle,
+			                                force_batch_size=force_batch_size, gen=gen, **kwargs)
+			for sel in sels:
+				N = len(sel)
+				if total_samples is not None:
+					total_samples -= N
+					if hard_limit and total_samples < 0:
+						break
+				if pbar is not None:
+					pbar.update(N)
+				yield self.create_batch(sel=sel)
+				if total_samples is not None and total_samples <= 0:
+					break
+		if pbar is not None:
+			pbar.close()
+
+
+
+class Batch(Batchable, base.Container):
+	def __init__(self, source, sel=None, **kwargs):
+		super().__init__(**kwargs)
+		self.source = source
 		self.sel = sel
+	
+	
+	def get_iterator(self, *, sel=None, **kwargs):
+		if sel is None:
+			sel = self.sel
+		return super().get_iterator(sel=sel, **kwargs)
+
+
+	def generate_selections(self, *, sel=None, **kwargs):
+		if sel is None:
+			sel = self.sel
+		return super().generate_selections(sel=sel, **kwargs)
 
 
 	def get_available(self):
-		return list(self.dataset.buffers.keys())
+		return list(self.source.buffers.keys())
 
 
 	def get_space(self, name):
-		return self.dataset.get_space(name)
+		return self.source.get_space(name)
 
 
 	def _find_missing(self, key, **kwargs):
-		val = self.dataset.get(key, self.sel, **kwargs)
+		val = self.source.get(key, self.sel, **kwargs)
 		if self.device is not None:
 			val = val.to(self.device)
 		self[key] = val # cache the results
@@ -42,6 +189,12 @@ class Batch(base.Container):
 	@property
 	def size(self):
 		return len(self.sel)
+
+
+	def create_batch(self, batch_type=None, **kwargs):
+		if batch_type is None:
+			batch_type = self.__class__
+		return batch_type(self.source, **kwargs)
 
 
 	def __str__(self):
@@ -54,7 +207,7 @@ class Batch(base.Container):
 
 
 
-class DataCollection(base.Buffer):
+class DataCollection(base.Buffer, Iterable):
 	name = None
 	
 	def __init__(self, *, name=None, mode=None,
@@ -178,33 +331,6 @@ class DataCollection(base.Buffer):
 		return self._package_sample(sample, name, sel, **kwargs)
 
 
-	_default_batch_type = Batch
-	def create_batch(self, batch_type=None, **kwargs):
-		if batch_type is None:
-			batch_type = self._default_batch_type
-		return batch_type(self, **kwargs)
-
-
-	def generate_selections(self, **kwargs):
-		raise NotImplementedError
-
-
-	def get_batch(self, **kwargs):
-		return next(self.get_iterator(**kwargs))
-
-
-	def get_iterator(self, infinite=False, **kwargs):
-		first = True
-		while first or infinite:
-			for sel in self.generate_selections(**kwargs):
-				yield self.create_batch(sel=sel)
-			first = False
-
-
-	def __iter__(self):
-		return self.get_iterator()
-
-
 	def register_modes(self, **modes):
 		for name, mode in modes.items():
 			mode._mode = name
@@ -225,17 +351,9 @@ class DataCollection(base.Buffer):
 
 
 	
-class Dataset(DataCollection, base.FixedBuffer):
-	def __init__(self, batch_size=64, shuffle_batches=True, force_batch_size=True,
-	             batch_device=None, infinite=False, **kwargs):
+class Dataset(DataCollection, Batchable, base.FixedBuffer):
+	def __init__(self, **kwargs):
 		super().__init__(**kwargs)
-
-		self._batch_size = batch_size
-		self._force_batch_size = force_batch_size
-		self._shuffle_batches = shuffle_batches
-		self._batch_device = batch_device
-		self._infinite = infinite
-
 		self._subset_src = None
 		self._waiting_subset = None
 		self._subset_indices = None
@@ -245,91 +363,14 @@ class Dataset(DataCollection, base.FixedBuffer):
 		return f'{self.__class__.__name__}<{self.mode}>[{len(self)}]'
 
 
-	@property
-	def batch_size(self):
-		return self._batch_size
-
-
 	_default_buffer_type = TensorBuffer
 
 
-	@staticmethod
-	def _is_big_number(N):
-		return N > 10000000
-
-
-	@classmethod
-	def shuffle_indices(cls, N, seed=None, gen=None):
-		if seed is not None and gen is None:
-			gen = torch.Generator()
-			gen.manual_seed(seed)
-		# TODO: include a warning if cls._is_big_number(N)
-		return torch.randint(N, size=(N,), generator=gen) \
-			if cls._is_big_number(N) else torch.randperm(N, generator=gen)
-
-
-	def generate_selections(self, num_samples=None, batch_size=None, shuffle=False, force_batch_size=None, gen=None):
-		if batch_size is None:
-			batch_size = self.batch_size
-		if force_batch_size is None:
-			force_batch_size = self._force_batch_size
-		if gen is None:
-			gen = self.gen
-		order = self.shuffle_indices(len(self), gen=gen) if shuffle else torch.arange(len(self))
-		if num_samples is not None and len(order) > num_samples:
-			order = order[:max(num_samples, batch_size) if force_batch_size else num_samples]
-		inds = list(order.split(batch_size))
-		if force_batch_size and len(inds) and len(inds[-1]) != batch_size:
-			inds.pop()
-		return inds
-
-
-	def get_iterator(self, epochs=1, num_samples=None, num_batches=None, infinite=False, hard_limit=True,
-	                 batch_size=None, shuffle=None, force_batch_size=None, gen=None, pbar=None, **kwargs):
-		if batch_size is None:
-			batch_size = self.batch_size
-		if force_batch_size is None:
-			force_batch_size = self._force_batch_size
-		if shuffle is None:
-			shuffle = self._shuffle_batches
-		if gen is None:
-			gen = self.gen
-
-		N = len(self)
-		samples_per_epoch = N - int(force_batch_size) * (N % batch_size)
-		batches_per_epoch = int(math.ceil(samples_per_epoch / batch_size))
-		if infinite is None:
-			total_samples = None
-		elif num_batches is not None:
-			total_samples = (num_batches % batches_per_epoch) * batch_size \
-			                + (num_batches // batches_per_epoch) * samples_per_epoch
-		elif num_samples is not None:
-			total_samples = num_samples - int(force_batch_size or hard_limit) * (num_samples % batch_size) \
-			                + int(not hard_limit and num_samples % batch_size > 0) * batch_size
-		else:
-			total_samples = samples_per_epoch * epochs
-		print(total_samples)
-		if pbar is not None:
-			pbar = pbar(total=total_samples)
-
-		while total_samples is None or total_samples > 0:
-			sels = self.generate_selections(num_samples=total_samples, batch_size=batch_size, shuffle=shuffle,
-			                                force_batch_size=force_batch_size, gen=gen, **kwargs)
-
-
-			for sel in sels:
-				N = len(sel)
-				if total_samples is not None:
-					total_samples -= N
-					if hard_limit and total_samples < 0:
-						break
-				if pbar is not None:
-					pbar.update(N)
-				yield self.create_batch(sel=sel)
-				if total_samples is not None and total_samples <= 0:
-					break
-		if pbar is not None:
-			pbar.close()
+	_default_batch_type = Batch
+	def create_batch(self, batch_type=None, **kwargs):
+		if batch_type is None:
+			batch_type = self._default_batch_type
+		return batch_type(self, **kwargs)
 
 
 	@staticmethod
