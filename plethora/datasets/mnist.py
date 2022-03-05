@@ -4,7 +4,7 @@ import torch
 from torch.nn import functional as F
 import torchvision
 
-from .base import Dataset, SupervisedDataset, ImageDataset, TensorBuffer
+from .base import Dataset, SupervisedDataset, TensorBuffer, ImageDataset
 from ..framework.base import Buffer, FixedBuffer
 from ..framework.util import spaces
 from ..framework import Fileable
@@ -21,9 +21,13 @@ class ImageBuffer(TensorBuffer):
 
 
 class Torchvision_Toy_Dataset(SupervisedDataset, ImageDataset):
-	def __init__(self, resize=True, download=None, target_attr='targets', _source_type=None, _source_kwargs=None,
+	def __init__(self, resize=True, download=None, target_attr='targets',
+	             mode=None, default_len=None,
+	             _source_type=None, _source_kwargs=None,
 	             _observation_space=None, _target_space=None, **kwargs):
-		super().__init__(**kwargs)
+		if default_len is None:
+			default_len = 10000 if mode == 'test' else 60000
+		super().__init__(mode=mode, default_len=default_len, **kwargs)
 
 		self._source_type = _source_type
 		if _source_kwargs is None:
@@ -45,15 +49,15 @@ class Torchvision_Toy_Dataset(SupervisedDataset, ImageDataset):
 		kwargs = self._source_kwargs.copy()
 		if 'root' not in kwargs:
 			kwargs['root'] = self.get_root()
-		if self.mode is not None:
-			kwargs['train'] = self.mode != 'test'
+		kwargs['train'] = self.mode != 'test'
 		if 'download' not in kwargs and self._download is not None:
 			kwargs['download'] = self._download
 		return kwargs
 
 
 	def _load(self, *args, **kwargs):
-		src = self._source_type(**self._get_source_kwargs())
+		src_kwargs = self._get_source_kwargs()
+		src = self._source_type(**src_kwargs)
 
 		images = src.data
 		if isinstance(images, np.ndarray):
@@ -84,7 +88,8 @@ class MNIST(Torchvision_Toy_Dataset):
 			_observation_space = spaces.PixelSpace(1, 28, 28, as_bytes=as_bytes)
 		if _target_space is None:
 			_target_space = spaces.CategoricalDim(10)
-		super().__init__(_observation_space=_observation_space, _target_space=_target_space, **kwargs)
+		super().__init__(_observation_space=_observation_space, _target_space=_target_space,
+		                 _source_type=_source_type, **kwargs)
 
 
 
@@ -97,7 +102,8 @@ class KMNIST(Torchvision_Toy_Dataset):
 			_observation_space = spaces.PixelSpace(1, 28, 28, as_bytes=as_bytes)
 		if _target_space is None:
 			_target_space = spaces.CategoricalDim(['お', 'き', 'す', 'つ', 'な', 'は', 'ま', 'や', 'れ', 'を'])
-		super().__init__(_observation_space=_observation_space, _target_space=_target_space, **kwargs)
+		super().__init__(_observation_space=_observation_space, _target_space=_target_space,
+		                 _source_type=_source_type, **kwargs)
 
 
 
@@ -111,13 +117,23 @@ class FashionMNIST(Torchvision_Toy_Dataset):
 		if _target_space is None:
 			_target_space = spaces.CategoricalDim(['top', 'trouser', 'pullover', 'dress', 'coat', 'sandal', 'shirt',
 			                                       'sneaker', 'bag', 'boot'])
-		super().__init__(_observation_space=_observation_space, _target_space=_target_space, **kwargs)
+		super().__init__(_observation_space=_observation_space, _target_space=_target_space,
+		                 _source_type=_source_type, **kwargs)
 
 
 
 class EMNIST(Torchvision_Toy_Dataset):
 	name = 'emnist'
-	def __init__(self, split='letters', as_bytes=False, _source_type=None,
+	_source_split_default_lens = {
+		'byclass': {'train': 697932, 'test': 116323},
+		'mnist': {'train': 60000, 'test': 10000},
+		'balanced': {'train': 112800, 'test': 18800},
+		'digits': {'train': 240000, 'test': 40000},
+		'bymerge': {'train': 697932, 'test': 116323},
+		'letters': {'train': 124800, 'test': 20800}
+	}
+	
+	def __init__(self, split='letters', as_bytes=False, _source_type=None, default_len=None, mode=None,
 	             _observation_space=None, _target_space=None, **kwargs):
 		if _source_type is None:
 			_source_type = torchvision.datasets.EMNIST
@@ -126,14 +142,25 @@ class EMNIST(Torchvision_Toy_Dataset):
 		if _target_space is None:
 			assert split in _source_type.classes_split_dict, f'{split} vs {list(_source_type.classes_split_dict)}'
 			_target_space = spaces.CategoricalDim(_source_type.classes_split_dict[split])
-		super().__init__(_observation_space=_observation_space, _target_space=_target_space, **kwargs)
+		
+		if default_len is None and split in self._source_split_default_lens:
+			default_len = self._source_split_default_lens['test' if mode == 'test' else 'train']
+		
+		super().__init__(_observation_space=_observation_space, _target_space=_target_space,
+		                 default_len=default_len, _source_type=_source_type, **kwargs)
 		self._split = split
+
+
+	def _get_source_kwargs(self):
+		kwargs = super()._get_source_kwargs()
+		kwargs['split'] = self._split
+		return kwargs
 
 
 
 class SVHN(Torchvision_Toy_Dataset):
 	name = 'svhn'
-	def __init__(self, as_bytes=False, target_attr=None, _source_type=None,
+	def __init__(self, as_bytes=False, _source_type=None, default_len=None, mode=None,
 	             _observation_space=None, _target_space=None, **kwargs):
 		if _source_type is None:
 			_source_type = torchvision.datasets.SVHN
@@ -141,8 +168,11 @@ class SVHN(Torchvision_Toy_Dataset):
 			_observation_space = spaces.PixelSpace(3, 32, 32, as_bytes=as_bytes)
 		if _target_space is None:
 			_target_space = spaces.CategoricalDim(10)
-		super().__init__(target_attr='labels',
-		                 _observation_space=_observation_space, _target_space=_target_space, **kwargs)
+		if default_len is None:
+			default_len = 26032 if mode == 'test' else 73257
+		super().__init__(target_attr='labels', mode=mode, default_len=default_len,
+		                 _observation_space=_observation_space, _target_space=_target_space,
+		                 _source_type=_source_type, **kwargs)
 
 
 	def _get_source_kwargs(self):
@@ -163,7 +193,14 @@ class CIFAR10(Torchvision_Toy_Dataset):
 		if _target_space is None:
 			_target_space = spaces.CategoricalDim(['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog',
 			                                       'horse', 'ship', 'truck'])
-		super().__init__(_observation_space=_observation_space, _target_space=_target_space, **kwargs)
+		super().__init__(_observation_space=_observation_space, _target_space=_target_space,
+		                 _source_type=_source_type, **kwargs)
+
+
+	def get_root(self, dataset_dir=None):
+		if dataset_dir is None:
+			dataset_dir = 'cifar'
+		return super().get_root(dataset_dir=dataset_dir)
 
 
 
@@ -189,8 +226,14 @@ class CIFAR100(Torchvision_Toy_Dataset):
 	                    'sweet_pepper', 'table', 'tank', 'telephone', 'television', 'tiger', 'tractor', 'train',
 	                 'trout', 'tulip', 'turtle', 'wardrobe', 'whale', 'willow_tree', 'wolf', 'woman', 'worm'
 				 ])
-		super().__init__(_observation_space=_observation_space, _target_space=_target_space, **kwargs)
+		super().__init__(_observation_space=_observation_space, _target_space=_target_space,
+		                 _source_type=_source_type, **kwargs)
 
+	
+	def get_root(self, dataset_dir=None):
+		if dataset_dir is None:
+			dataset_dir = 'cifar'
+		return super().get_root(dataset_dir=dataset_dir)
 
 
 

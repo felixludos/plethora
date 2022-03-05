@@ -1,10 +1,14 @@
+import json
+import os
+from pathlib import Path
 import math
 from collections import OrderedDict
 import torch
-from omnibelt import unspecified_argument, duplicate_instance
+from omnibelt import unspecified_argument, duplicate_instance, md5
+import h5py as hf
 
 from ..framework import base, Fileable
-from .buffers import TensorBuffer, WrappedBuffer
+from .buffers import TensorBuffer, WrappedBuffer, HDFBuffer
 
 class MissingModeError(Exception):
 	pass
@@ -115,8 +119,10 @@ class Batchable(Iterable, base.Seeded):
 			shuffle = self._shuffle_batches
 		if gen is None:
 			gen = self.gen
+			
+		subsel = sel
 
-		N = len(self) if sel is None else len(sel)
+		N = len(self) if subsel is None else len(subsel)
 		samples_per_epoch = N - int(force_batch_size) * (N % batch_size)
 		batches_per_epoch = int(math.ceil(samples_per_epoch / batch_size))
 		if infinite is None:
@@ -125,15 +131,19 @@ class Batchable(Iterable, base.Seeded):
 			total_samples = (num_batches % batches_per_epoch) * batch_size \
 			                + (num_batches // batches_per_epoch) * samples_per_epoch
 		elif num_samples is not None:
-			total_samples = num_samples - int(force_batch_size or hard_limit) * (num_samples % batch_size) \
-			                + int(not hard_limit and num_samples % batch_size > 0) * batch_size
+			total_samples = samples_per_epoch * (num_samples // samples_per_epoch)
+			remainder = num_samples % samples_per_epoch
+			total_samples += batch_size * (remainder // batch_size)
+			remainder = remainder % batch_size
+			if not hard_limit or not force_batch_size:
+				total_samples += remainder
 		else:
 			total_samples = samples_per_epoch * epochs
 		if pbar is not None:
 			pbar = pbar(total=total_samples)
-
+			
 		while total_samples is None or total_samples > 0:
-			sels = self.generate_selections(sel=sel, num_samples=total_samples, batch_size=batch_size, shuffle=shuffle,
+			sels = self.generate_selections(sel=subsel, num_samples=total_samples, batch_size=batch_size, shuffle=shuffle,
 			                                force_batch_size=force_batch_size, gen=gen, **kwargs)
 			for sel in sels:
 				N = len(sel)
@@ -207,7 +217,7 @@ class Batch(Batchable, base.Container):
 
 
 
-class DataCollection(base.Buffer, Iterable):
+class DataCollection(Iterable, base.Buffer):
 	name = None
 	
 	def __init__(self, *, name=None, mode=None,
@@ -641,39 +651,151 @@ class SourcedDataset(DataCollection, Fileable):
 		return super()._infer_root(root=root) / 'datasets'
 
 
-	def get_root(self):
-		root = super().get_root() / self.get_name()
+	def get_root(self, dataset_dir=None):
+		if dataset_dir is None:
+			dataset_dir = self.get_name()
+		root = super().get_root() / dataset_dir
 		os.makedirs(str(root), exist_ok=True)
 		return root
 
 
-	_default_hdf_buffer_type = None
-	def register_hdf_buffer(self, name, dataset_name, file_name=None, root=None, **kwargs):
+	def _find_path(self, dataset_name='', file_name=None, root=None):
 		if root is None:
 			root = self.get_root()
-
 		*other, dataset_name = dataset_name.split('.')
 		if file_name is None:
-			file_name = '.'.join(other) if len(other) else 'aux'
-
+			file_name = '.'.join(other) if len(other) else self.name
 		path = root / f'{file_name}.h5'
-		# return self.register_buffer(name, buffer_type= path=path)
+		return path, dataset_name
+
+
+	_default_hdf_buffer_type = HDFBuffer
+	def register_hdf_buffer(self, name, dataset_name, file_name=None, root=None,
+	                        buffer_type=None, path=None, **kwargs):
+		if buffer_type is None:
+			buffer_type = self._default_hdf_buffer_type
+		if path is None:
+			path, dataset_name = self._find_path(dataset_name, file_name=file_name, root=root)
+		return self.register_buffer(name, buffer_type=buffer_type, dataset_name=dataset_name, path=path, **kwargs)
+
+
+	@staticmethod
+	def create_hdf_dataset(path, dataset_name, data=None, meta=None, dtype=None, shape=None):
+		# if file_name is unspecified_argument:
+		# 	file_name = 'aux'
+		# if path is None:
+		# 	path, dataset_name = self._find_path(dataset_name, file_name=file_name, root=root)
+		
+		if isinstance(data, torch.Tensor):
+			data = data.detach().cpu().numpy()
+		with hf.File(path, 'a') as f:
+			if data is not None or (dtype is not None and shape is not None):
+				f.create_dataset(dataset_name, data=data, dtype=dtype, shape=shape)
+			if meta is not None:
+				f.attrs[dataset_name] = json.dumps(meta, sort_keys=True)
+		return path, dataset_name
 
 
 
-	# def register_buffer(self, name, buffer=None, space=unspecified_argument, buffer_type=None, **kwargs):
-	# 	if not isinstance(buffer, base.Buffer):
-	# 		if buffer_type is None and issubclass(buffer, base.Buffer):
-	# 			buffer_type = buffer
-	# 		elif 'data' not in kwargs and buffer is not None:
-	# 			kwargs['data'] = buffer
-	# 		buffer = self._default_buffer_factory(name, buffer_type=buffer_type, **kwargs)
-	# 	if space is not unspecified_argument:
-	# 		buffer.set_space(space)
-	# 	self.buffers[name] = buffer
-	# 	return self.buffers[name]
-
-
+class EncodableDataset(ObservationDataset, SourcedDataset):
+	def __init__(self, encoder=None, replace_observation_key=None, encoded_key='encoded',
+	             encoded_file_name='aux', encode_on_load=False, save_encoded=False, encode_pbar=None, **kwargs):
+		super().__init__(**kwargs)
+		self.encoder = encoder
+		self._replace_observation_key = replace_observation_key
+		self._encoded_observation_key = encoded_key
+		self._encoded_file_name = encoded_file_name
+		self._encode_on_load = encode_on_load
+		self._save_encoded = save_encoded
+		self._encode_pbar = encode_pbar
+	
+	
+	def set_encoder(self, encoder):
+		buffer = self.get_buffer(self._encoded_observation_key)
+		if buffer is not None:
+			buffer.set_encoder(encoder)
+		self.encoder = encoder
+	
+	
+	def _get_code_path(self, file_name='aux', root=None):
+		return None if file_name is None else self._find_path(file_name=file_name, root=root)[0]
+	
+	
+	@staticmethod
+	def _encoder_save_key(encoder):
+		info = encoder.get_ident()
+		ident = md5(json.dumps(info, sort_keys=True))
+		return ident, info
+		
+	
+	def load_encoded_data(self, encoder=None, source_key='observation',
+	                      batch_size=None, save_encoded=None,
+	                      file_name=unspecified_argument, root=None):
+		if encoder is None:
+			encoder = self.encoder
+		if file_name is unspecified_argument:
+			file_name = self._encoded_file_name
+		if save_encoded is None:
+			save_encoded = self._save_encoded
+		data = None
+		
+		path = self._get_code_path(file_name=file_name, root=root)
+		if path is not None and path.exists() and encoder is not None:
+			ident, _ = self._encoder_save_key(encoder)
+			with hf.File(str(path), 'r') as f:
+				if ident in f:
+					data = f[ident][()]
+					data = torch.from_numpy(data)
+		
+		if data is None and self._encode_on_load:
+			batches = []
+			for batch in self.get_iterator(batch_size=batch_size, shuffle=False, force_batch_size=False,
+			                               pbar=self._encode_pbar):
+				with torch.no_grad():
+					batches.append(encoder(batch[source_key]))
+			
+			data = torch.cat(batches)
+			if save_encoded:
+				self.save_encoded_data(encoder, data, path)
+		
+		return data
+	
+	
+	@classmethod
+	def save_encoded_data(cls, encoder, data, path):
+		ident, info = cls._encoder_save_key(encoder)
+		cls.create_hdf_dataset(path, ident, data=data, meta=info)
+		
+	
+	def _load(self, *args, **kwargs):
+		super()._load(*args, **kwargs)
+		
+		if self._replace_observation_key is not None:
+			self._encoded_observation_key = 'observation'
+			self.register_buffer(self._replace_observation_key, self.get_buffer('observation'))
+		
+		self.register_buffer(self._encoded_observation_key,
+		                     buffer=self.EncodedBuffer(encoder=self.encoder, source=self.get_buffer('observation'),
+		                                        data=self.load_encoded_data()))
+	
+	
+	class EncodedBuffer(WrappedBuffer):
+		def __init__(self, encoder=None, **kwargs):
+			super().__init__(**kwargs)
+			self.set_encoder(encoder)
+			
+		
+		def set_encoder(self, encoder=None):
+			self.encoder = encoder
+			if self.encoder is not None:
+				self.set_space(self.encoder.dout)
+		
+		
+		def _get(self, sel=None, device=None, **kwargs):
+			sample = super()._get(sel=sel, device=device, **kwargs)
+			if self.data is None and self.encoder is not None:
+				sample = self.encoder(sample)
+			return sample
 
 
 
@@ -686,11 +808,11 @@ class ImageDataset(ObservationDataset, SourcedDataset):
 		raise NotImplementedError
 
 
-	@classmethod
-	def _default_buffer_factory(cls, ):
-
-
-		pass
+	# @classmethod
+	# def _default_buffer_factory(cls, ):
+	#
+	#
+	# 	pass
 
 
 

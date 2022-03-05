@@ -44,9 +44,10 @@ class TensorBuffer(base.FixedBuffer):
 
 
 class HDFBuffer(base.FixedBuffer):
-	def __init__(self, dataset_name, path, default_len=None, **kwargs):
-		with hf.File(str(path), 'r') as f:
-			shape = f[dataset_name].shape
+	def __init__(self, dataset_name=None, path=None, default_len=None, shape=None, **kwargs):
+		if path is not None and path.exists() and dataset_name is not None:
+			with hf.File(str(path), 'r') as f:
+				shape = f[dataset_name].shape
 		if default_len is None:
 			default_len = shape[0]
 		super().__init__(default_len=default_len, **kwargs)
@@ -96,8 +97,8 @@ class LoadableHDFBuffer(TensorBuffer, HDFBuffer):
 
 
 class WrappedBuffer(TensorBuffer):
-	def __init__(self, source=None, sel=None, space=None, data=None, **kwargs):
-		super().__init__(space=None, data=None, **kwargs)
+	def __init__(self, source=None, sel=None, **kwargs):
+		super().__init__(**kwargs)
 		self.source, self.sel = None, None
 		self.register_children(source=source, sel=sel)
 		self.set_source(source)
@@ -115,11 +116,11 @@ class WrappedBuffer(TensorBuffer):
 
 	def unwrap(self, **kwargs):
 		if self.is_loaded() and self.source is not None:
-			self.set_data(self._get(self.sel, device=self.device, **kwargs))
+			self.set_data(self._get(sel=self.sel, device=self.device, **kwargs))
 			self.sel = None
 			self.set_space(self.get_space())
-			self._loaded = self.source._loaded
-			self.set_source()
+			# self._loaded = self.source._loaded
+			# self.set_source()
 			return
 		raise base.NotLoadedError(self)
 
@@ -153,10 +154,11 @@ class WrappedBuffer(TensorBuffer):
 
 
 	def _get(self, sel=None, device=None, **kwargs):
-		if self.source is None:
+		if self.data is not None:
 			return super()._get(sel, device=device, **kwargs)
 		if self.sel is not None:
 			sel = self.sel if sel is None else self.sel[sel]
+		assert self.source is not None, 'missing source'
 		return self.source.get(sel, device=device, **kwargs)
 
 

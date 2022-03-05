@@ -307,7 +307,7 @@ class SphericalSpace(MultiDimSpace, UnboundDim):
 
 
 class SpatialSpace(MultiDimSpace):
-	def __init__(self, channels, *size, shape=None, channel_first=False, **kwargs):
+	def __init__(self, channels, size=(), shape=None, channel_first=False, **kwargs):
 		if isinstance(size, int):
 			size = (size,)
 

@@ -7,7 +7,7 @@ import omnifig as fig
 
 from . import tasks
 from . import community
-from .datasets import toy
+from .datasets import toy, mnist
 
 
 
@@ -42,10 +42,54 @@ def _download_community_directory(name, path, src_desc=None, silent=False):
 		print(f'{str(path)} has been copied to the community package "{name}".')
 	return dest
 
-
+from tqdm import tqdm
 
 @fig.Script('test')
 def _test_script(A):
+	dataset = mnist.CIFAR10().load()
+	print(len(dataset))
+	dataset = mnist.CIFAR10(mode='test').load()
+	print(len(dataset))
+	
+	print(dataset)
+	
+	return
+	
+	classes_split_dict = {
+		'byclass',
+		'bymerge',
+		'balanced',
+		'letters',
+		'digits',
+		'mnist',
+	}
+	
+	lns = {}
+	for name in tqdm(classes_split_dict):
+		dataset = mnist.EMNIST(split=name).load()
+		lns[name] = {'train': len(dataset)}
+		dataset = mnist.EMNIST(split=name, mode='test').load()
+		lns[name]['test'] = len(dataset)
+	print(lns)
+	
+	
+	print(len(dataset))
+	
+	dataset.load()
+	
+	print(len(dataset))
+	
+	print(dataset)
+	
+	return
+	
+	dataset = toy.SwissRollDataset(10, noise=.1, seed=11).load()
+	
+	print(list(dataset.get_iterator(batch_size=4, num_samples=5, force_batch_size=False,
+                          hard_limit=False, )))
+	
+
+	return
 
 	dataset = toy.SwissRollDataset(100).load()
 
