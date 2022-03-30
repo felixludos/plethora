@@ -2,7 +2,7 @@
 import math
 import torch
 import h5py as hf
-from ..framework import base, Fileable
+from ..framework import base, Sourced
 
 
 

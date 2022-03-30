@@ -7,7 +7,7 @@ import torch
 from omnibelt import unspecified_argument, duplicate_instance, md5
 import h5py as hf
 
-from ..framework import base, Fileable
+from ..framework import base, Sourced
 from .buffers import TensorBuffer, WrappedBuffer, HDFBuffer
 
 class MissingModeError(Exception):
@@ -186,6 +186,14 @@ class Batch(Batchable, base.Container):
 
 	def get_space(self, name):
 		return self.source.get_space(name)
+
+	
+	def is_cached(self, item):
+		return super().__contains__(item)
+	
+	
+	def __contains__(self, item):
+		return super().__contains__(item) or (self.source is not None and item in self.source.buffers)
 
 
 	def _find_missing(self, key, **kwargs):
@@ -436,7 +444,7 @@ class Dataset(DataCollection, Batchable, base.FixedBuffer):
 		return len(next(iter(self.buffers.values())))
 	
 	
-	def split(self, splits, shuffle=False, register_modes=True):
+	def split(self, splits, shuffle=False, register_modes=False):
 		auto_name = isinstance(splits, (list, tuple, set))
 		register_modes = register_modes and not auto_name
 		if auto_name:
@@ -645,7 +653,7 @@ class SyntheticDataset(LabeledDataset):
 
 
 
-class SourcedDataset(DataCollection, Fileable):
+class SourcedDataset(DataCollection, Sourced):
 	@classmethod
 	def _infer_root(cls, root=None):
 		return super()._infer_root(root=root) / 'datasets'
@@ -659,6 +667,12 @@ class SourcedDataset(DataCollection, Fileable):
 		return root
 
 
+	def get_aux_root(self, dataset_dir=None):
+		root = self.get_root(dataset_dir=dataset_dir) / 'aux'
+		os.makedirs(str(root), exist_ok=True)
+		return root
+	
+	
 	def _find_path(self, dataset_name='', file_name=None, root=None):
 		if root is None:
 			root = self.get_root()
@@ -723,7 +737,7 @@ class EncodableDataset(ObservationDataset, SourcedDataset):
 	
 	@staticmethod
 	def _encoder_save_key(encoder):
-		info = encoder.get_ident()
+		info = encoder.get_encoder_fingerprint()
 		ident = md5(json.dumps(info, sort_keys=True))
 		return ident, info
 		
@@ -784,7 +798,7 @@ class EncodableDataset(ObservationDataset, SourcedDataset):
 			super().__init__(**kwargs)
 			self.set_encoder(encoder)
 			
-		
+			
 		def set_encoder(self, encoder=None):
 			self.encoder = encoder
 			if self.encoder is not None:

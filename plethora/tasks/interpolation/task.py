@@ -2,7 +2,7 @@
 import torch
 from omnibelt import get_printer
 from ...framework import util
-from ..base import Task, BatchedTask, ResultsContainer
+from ..base import Task, BatchedTask
 
 from .criterion import PathDiscriminator
 
@@ -10,18 +10,18 @@ prt = get_printer(__file__)
 
 
 
-class AccumulationContainer(ResultsContainer):
-	def __init__(self, **kwargs):
-		super().__init__(**kwargs)
-		self.criteria = []
-
-
-	def accumulate(self, criteria):
-		self.criteria.append(criteria)
-
-
-	def aggregate(self):
-		return torch.cat(self.criteria)
+# class AccumulationContainer(ResultsContainer):
+# 	def __init__(self, **kwargs):
+# 		super().__init__(**kwargs)
+# 		self.criteria = []
+#
+#
+# 	def accumulate(self, criteria):
+# 		self.criteria.append(criteria)
+#
+#
+# 	def aggregate(self):
+# 		return torch.cat(self.criteria)
 
 
 

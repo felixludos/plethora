@@ -1,120 +1,144 @@
 import torch
-from omnibelt import get_printer
+from omnibelt import get_printer, unspecified_argument
 from ...framework import util
-from ..base import Task, BatchedTask, ResultsContainer
+from ..base import Task, BatchedTask, SimpleEvaluationTask
 
 prt = get_printer(__file__)
 
 
-class AccumulationContainer(ResultsContainer):
-	def __init__(self, **kwargs):
-		super().__init__(**kwargs)
-		self.criteria = []
-
-
-	def accumulate(self, criteria):
-		self.criteria.append(criteria)
-
-
-	def aggregate(self):
-		return torch.cat(self.criteria)
-
-
-
-class AbstractGenerationTask(Task):
+class AbstractGenerationTask(BatchedTask):
 	@classmethod
-	def run(cls, info, **kwargs):
-		
-
-
-		cls._generate_batch(info)
-		cls._eval_samples(info)
+	def run_step(cls, batch, info):
+		info.clear()
+		info.set_batch(batch)
+		cls._generate_step(info)
+		cls._judge_step(info)
 		return info
 
 
 	@staticmethod
-	def _generate_batch(info):
+	def _generate_step(info):
 		raise NotImplementedError
 
 
 	@staticmethod
-	def _eval_samples(info):
+	def _judge_step(info):
 		raise NotImplementedError
 
 
 
-class DatasetGenerationTask(BatchedTask):
-	
-	@staticmethod
-	def run_step(batch, info, slim=False, online=False, seed=None, gen=None):
-		
-		pass
-	
-	pass
-
-
-
-class GenerationTask(AbstractGenerationTask):
-	def __init__(self, generator=None, discriminator=None,
-	             score_key=None, **kwargs):
-		if score_key is None:
-			score_key = 'mean'
-		super().__init__(score_key=score_key, **kwargs)
-
+class DiscriminatorGenerationTask(SimpleEvaluationTask, AbstractGenerationTask):
+	def __init__(self, generator=None, discriminator=None, **kwargs):
+		super().__init__(**kwargs)
 		self.generator = generator
 		self.discriminator = discriminator
 
-
-	@staticmethod
-	def score_names():
-		return ['mean', 'std', 'min', 'max', *super().score_names()]
-
-	@staticmethod
-	def create_results_container(dataset=None, **kwargs):
-		return AccumulationContainer(dataset=dataset, **kwargs)
-
-	def _compute(self, **kwargs):
-		return super()._compute(generator=self.generator, discriminator=self.discriminator, **kwargs)
-
 	@classmethod
-	def prepare(cls, generator=None, discriminator=None, **kwargs):
+	def _eval_step(cls, info, *, comparison_key='comparison'):
+		cls._generate_step(info)
+		cls._judge_step(info, comparison_key=comparison_key)
+		return info
+
+
+	@staticmethod
+	def _generate_step(info, generated_key='samples'):
+		info[generated_key] = info.generator.generate(info.batch.size, gen=info.gen)
+		return info
+	
+
+	@staticmethod
+	def _judge_step(info, *, samples=None, comparison_key='comparison'):
+		if samples is None:
+			samples = info['samples']
+		info[comparison_key] = info.discriminator.judge(samples)
+		return info
+
+
+
+class AbstractFeatureGenerationTask(AbstractGenerationTask):
+	def __init__(self, generator=None, extractor=None, feature_criterion=None, **kwargs):
+		super().__init__(**kwargs)
+		self.generator = generator
+		self.extractor = extractor
+		self.feature_criterion = feature_criterion
+	
+	
+	class ResultsContainer(AbstractGenerationTask.ResultsContainer):
+		def __init__(self, **kwargs):
+			super().__init__(**kwargs)
+			self.fake_features = []
+			self.real_features = []
+		
+		
+		def accumulate_real(self, features):
+			if self.real_features is not None:
+				self.real_features.append(features)
+		
+		
+		def accumulate_fake(self, features):
+			self.fake_features.append(features)
+		
+		
+		def aggregate_real(self):
+			if self.real_features is not None:
+				return torch.cat(self.real_features)
+		
+		
+		def aggregate_fake(self):
+			if self.fake_features is not None:
+				return torch.cat(self.fake_features)
+	
+	
+	def prepare(self, generator=None, extractor=None, **kwargs):
 		if generator is None:
 			prt.warning('No generator provided')
-		if discriminator is None:
-			prt.warning('No discriminator provided')
+		if extractor is None:
+			prt.warning('No extractor provided')
 		info = super().prepare(**kwargs)
 		info.generator = generator
-		info.discriminator = discriminator
+		info.extractor = extractor
 		return info
-
-
+	
+	
 	@staticmethod
-	def _generate(info):
-		# info.generator.generate(, gen=info.gen)
-		raise NotImplementedError
-
-
+	def _generate_step(info, *, real=None, generated_key='generated'):
+		info[generated_key] = info.generator.generate(info.batch.size, gen=info.gen)
+		return info
+	
+	
 	@staticmethod
-	def _eval_samples(info):
-		raise NotImplementedError
+	def _judge_step(info, *, observation=None, generated=None, real_key='real', fake_key='fake'):
+		if observation is None:
+			observation = info['observation']
+		if generated is None:
+			generated = info['generated']
+
+		info[fake_key] = generated if info.extractor is None else info.extractor.encode(generated)
+		info[real_key] = observation if info.extractor is None else info.extractor.encode(observation)
+
+		info.accumulate_fake(info[fake_key])
+		info.accumulate_real(info[real_key])
+		return info
 
 
 	@classmethod
-	def aggregate(cls, info, slim=False, online=False, seed=None, gen=None):
+	def aggregate(cls, info):
 		info = super().aggregate(info)
-
-		criteria = info.aggregate()
-		path_criteria = criteria.view(criteria.shape[0], -1).mean(-1)
-
-		info.update({
-			'criteria': criteria,
-			'mean': path_criteria.mean(),
-			'max': path_criteria.max(),
-			'min': path_criteria.min(),
-			'std': path_criteria.std(),
-		})
+		
+		info['fake_features'] = info.aggregate_fake()
+		info['real_features'] = info.aggregate_real()
+		
+		cls._feature_criterion_step(info, info['fake_features'], info['real_features'])
+		
+		if info.slim:
+			del info['fake_features']
+			del info['real_features']
 		return info
 
+
+	@staticmethod
+	def _feature_criterion_step(info, fake, real):
+		raise NotImplementedError
 
 
 

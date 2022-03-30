@@ -7,7 +7,7 @@ import torchvision
 from .base import Dataset, SupervisedDataset, TensorBuffer, ImageDataset
 from ..framework.base import Buffer, FixedBuffer
 from ..framework.util import spaces
-from ..framework import Fileable
+from ..framework import Sourced
 
 
 

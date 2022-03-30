@@ -1,4 +1,6 @@
+
 from collections import OrderedDict
+import torch
 from omnibelt import unspecified_argument, duplicate_instance
 
 from .features import Device, DeviceContainer, Loadable, Seeded
@@ -54,6 +56,10 @@ class Buffer(BufferTransform, Loadable, DeviceContainer, Seeded):
 		if self.is_loaded():
 			return self._update(**kwargs)
 		self._waiting_update = self._store_update(**kwargs)
+
+
+	def _load(self, *args, **kwargs):
+		pass
 
 
 	def load(self, *args, **kwargs):

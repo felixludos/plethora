@@ -1,134 +1,90 @@
 import torch
 from omnibelt import get_printer
-from ..base import Task, BatchedTask, ResultsContainer
+from ..base import Task, BatchedTask, SimpleEvaluationTask
 
 prt = get_printer(__file__)
 
 
 
-class AccumulationContainer(ResultsContainer):
-	def __init__(self, **kwargs):
-		super().__init__(**kwargs)
-		self.criteria = []
-
-
-	def accumulate(self, criteria):
-		self.criteria.append(criteria)
-
-
-	def aggregate(self):
-		return torch.cat(self.criteria)
-
-
-
-class AbstractReconstructionTask(BatchedTask):
+class AbstractReconstructionTask(SimpleEvaluationTask):
 	@classmethod
-	def run_step(cls, batch, info, **kwargs):
-		info.clear()
-		info.set_batch(batch)
-		cls._encode(info)
-		cls._decode(info)
+	def _eval_step(cls, info, *, comparison_key='comparison'):
+		cls._encode_step(info)
+		cls._decode_step(info)
+		cls._compare_step(info, comparison_key=comparison_key)
 		return info
 
 
 	@staticmethod
-	def _encode(info):
+	def _encode_step(info):
 		raise NotImplementedError
 
 
 	@staticmethod
-	def _decode(info):
+	def _decode_step(info):
+		raise NotImplementedError
+
+	
+	@staticmethod
+	def _compare_step(info, *, comparison_key='comparison'):
 		raise NotImplementedError
 
 
 
 class ReconstructionTask(AbstractReconstructionTask):
-	def __init__(self, encoder=None, decoder=None, criterion=None,
-	             sample_format=None, score_key=None, **kwargs):
-		if score_key is None:
-			score_key = 'mean'
-		if sample_format is None:
-			sample_format = 'observation'
-		super().__init__(sample_format=sample_format, score_key=score_key, **kwargs)
+	def __init__(self, encoder=None, decoder=None, criterion=None, **kwargs):
+		super().__init__(**kwargs)
 		self.encoder = encoder
 		self.decoder = decoder
 		self.criterion = criterion
 
 
-	@staticmethod
-	def score_names():
-		return ['mean', 'std', 'min', 'max', *super().score_names()]
-
-
-	@staticmethod
-	def create_results_container(dataset=None, **kwargs):
-		return AccumulationContainer(dataset=dataset, **kwargs)
-
-
-	def _compute(self, **kwargs):
-		return super()._compute(encoder=self.encoder, decoder=self.decoder, criterion=self.criterion, **kwargs)
-
-
-	@classmethod
-	def prepare(cls, encoder=None, decoder=None, criterion=None, **kwargs):
+	def prepare(self, encoder=None, decoder=None, criterion=None, **kwargs):
 		if encoder is None:
-			prt.warning('No encoder provided')
+			encoder = self.encoder
+		if decoder is None:
+			decoder = self.decoder
+		if criterion is None:
+			criterion = self.criterion
+		
+		if encoder is None:
+			prt.warning('No encoder provided') # TODO: check required and fill in defaults
 		if decoder is None:
 			prt.warning('No decoder provided')
 		if criterion is None:
 			prt.warning('No criterion provided')
+		
 		info = super().prepare(**kwargs)
 		info.encoder = encoder
 		info.decoder = decoder
 		info.criterion = criterion
 		return info
 
-
-	@classmethod
-	def run(cls, info, sample_format=None, **kwargs):
-		if sample_format is None:
-			sample_format = 'observation'
-		return super().run(info, sample_format=sample_format, **kwargs)
-
 	
 	@staticmethod
-	def _encode(info):
-		code = info['original'] if info.encoder is None else info.encoder.encode(info['original'])
-		info['code'] = code
+	def _encode_step(info, *, original=None, code_key='code'):
+		if original is None:
+			original = info['observation']
+		info[code_key] = original if info.encoder is None else info.encoder.encode(original)
 		return info
 
 
 	@staticmethod
-	def _decode(info):
-		original = info['original']
-		code = info['code']
-
-		reconstruction = info.decoder.decode(code)
-		comparison = info.criterion.compare(reconstruction, original)
-
-		info.accumulate(comparison)
-		info.update({
-			'reconstruction': reconstruction,
-			'comparison': comparison,
-		})
+	def _decode_step(info, *, code=None, reconstruction_key='reconstruction'):
+		if code is None:
+			code = info['code']
+		info[reconstruction_key] = info.decoder.decode(code)
 		return info
 
 
-	@classmethod
-	def aggregate(cls, info, **kwargs):
-		info = super().aggregate(info, **kwargs)
-
-		criteria = info.aggregate()
-
-		info.update({
-			'criteria': criteria,
-			'mean': criteria.mean(),
-			'max': criteria.max(),
-			'min': criteria.min(),
-			'std': criteria.std(),
-		})
+	@staticmethod
+	def _compare_step(info, *, original=None, reconstruction=None, comparison_key='comparison'):
+		if original is None:
+			original = info['observation']
+		if reconstruction is None:
+			reconstruction = info['reconstruction']
+		info[comparison_key] = info.criterion.compare(reconstruction, original)
 		return info
-
 
 
 

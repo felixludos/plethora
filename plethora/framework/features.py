@@ -1,7 +1,8 @@
 import os
+from collections import OrderedDict
 from pathlib import Path
 import torch
-from omnibelt import unspecified_argument
+from omnibelt import unspecified_argument, agnosticmethod
 
 from . import util
 
@@ -57,14 +58,17 @@ class Seeded:
 			self.set_seed(self.seed)
 
 
-	def set_seed(self, seed=None):
+	@staticmethod
+	def create_rng(gen=None, seed=None):
 		if seed is None:
-			seed = util.gen_random_seed(self.gen)
-
+			seed = util.gen_random_seed(gen)
 		gen = torch.Generator()
 		gen.manual_seed(seed)
-		self.gen = gen
-		return seed
+		return gen
+
+
+	def set_seed(self, seed=None):
+		self.gen = self.create_rng(gen=self.gen, seed=seed)
 
 
 
@@ -111,7 +115,8 @@ class Loadable(Device):
 
 
 
-class Fileable:
+class Sourced:
+	_root = None
 	def __init__(self, root=None, **kwargs):
 		super().__init__(**kwargs)
 		self._root = root
@@ -126,8 +131,12 @@ class Fileable:
 		return root
 
 
+	@agnosticmethod
 	def get_root(self):
 		return self._infer_root(self._root)
+
+
+
 
 # class Downloadable: # TODO
 # 	pass

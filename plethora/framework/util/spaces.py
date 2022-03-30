@@ -4,7 +4,7 @@ import omnifig as fig
 
 import math
 
-# import numpy as np
+import numpy as np
 # import torch
 # from torch.nn import functional as F
 
@@ -307,11 +307,12 @@ class SphericalSpace(MultiDimSpace, UnboundDim):
 
 
 class SpatialSpace(MultiDimSpace):
-	def __init__(self, channels, size=(), shape=None, channel_first=False, **kwargs):
+	def __init__(self, channels, *size, shape=None, channel_first=True, **kwargs):
 		if isinstance(size, int):
 			size = (size,)
+		if not len(size):
+			size = shape
 
-		size = shape
 		shape = (channels,) if size is None else (
 			(channels, *size) if channel_first else (*size, channels))
 
@@ -323,18 +324,26 @@ class SpatialSpace(MultiDimSpace):
 
 class SequenceSpace(SpatialSpace):
 	def __init__(self, channels=1, length=None, **kwargs):
-		super().__init__(channels=channels, size=(length,), channel_first=True, **kwargs)
+		super().__init__(channels=channels, shape=(length,), **kwargs)
 		self.length = length
+	
+	
+	def __str__(self):
+		return f'Sequence(C={self.channels}, K={self.length})'
 
 
 class ImageSpace(SpatialSpace):
 	def __init__(self, channels=1, height=None, width=None, **kwargs):
-		super().__init__(channels=channels, size=(height, width), **kwargs)
+		super().__init__(channels=channels, shape=(height, width), **kwargs)
 		self.height = height
 		self.width = width
 
 
-class PixelSpace(BoundDim, ImageSpace):
+	def __str__(self):
+		return f'Image(C={self.channels}, H={self.height}, W={self.width})'
+	
+
+class PixelSpace(ImageSpace, BoundDim):
 	def __init__(self, channels=1, height=None, width=None, as_bytes=True, min=None, max=None, **kwargs):
 		min, max = (0, 255) if as_bytes else (0., 1.)
 		dtype = 'byte' if as_bytes else 'float'
@@ -344,10 +353,15 @@ class PixelSpace(BoundDim, ImageSpace):
 
 class VolumeSpace(SpatialSpace):
 	def __init__(self, channels=1, height=None, width=None, depth=None, **kwargs):
-		super().__init__(channels=channels, size=(height, width, depth), **kwargs)
+		super().__init__(channels=channels, shape=(height, width, depth), **kwargs)
 		self.height = height
 		self.width = width
 		self.depth = depth
+
+
+	def __str__(self):
+		return f'Volume(C={self.channels}, H={self.height}, W={self.width}, D={self.depth})'
+
 
 
 class CategoricalDim(DimSpec):
@@ -410,21 +424,30 @@ class BinaryDim(CategoricalDim):
 
 
 class JointSpace(DimSpec):
-	def __init__(self, *dims, shape=None, max=None, min=None, **kwargs):
+	def __init__(self, *dims, names=None, shape=None, max=None, min=None, **kwargs):
 		singles = []
-		for d in dims:
+		dim_names = []
+		for i, d in enumerate(dims):
 			if isinstance(d, JointSpace):
 				singles.extend(d.dims)
+				if d.names is not None:
+					dim_names.extend(d.names)
+				elif names is not None:
+					dim_names.extend([f'{names[i]}-{di}' for di, dm in enumerate(d.dims)])
 			else:
 				singles.append(d)
+				if names is not None:
+					dim_names.append(names[i])
 		dims = singles
 		shape = (sum(len(dim) for dim in dims),)
 		expanded_shape = (sum(dim.expanded_len() for dim in dims),)
 		
 		super().__init__(shape=shape, min=None, max=None, **kwargs)
-		
-		self._expanded_shape = expanded_shape
+		self.names = dim_names
 		self.dims = dims
+		self._expanded_shape = expanded_shape
+		self._dim_indices = np.cumsum([0] + [len(dim) for dim in self.dims]).tolist()
+		self._dim_expanded_indices = np.cumsum([0] + [dim.expanded_len() for dim in self.dims]).tolist()
 		self._is_dense = any(1 for dim in dims if isinstance(dim, ContinuousDim))
 	
 	def __str__(self):
@@ -438,8 +461,15 @@ class JointSpace(DimSpec):
 	def expanded_shape(self):
 		return self._expanded_shape
 	
+	
+	def select(self, data, idx, dim=1, use_expanded=False):
+		inds = self._dim_expanded_indices if use_expanded else self._dim_indices
+		start, stop = inds[idx], inds[idx+1]
+		sel = [None]*dim + [slice(start, stop)]
+		return data[tuple(sel)]
+	
+	
 	def _dispatch(self, method, *vals, use_expanded=False, **base_kwargs):
-		
 		outs = []
 		idx = 0
 		B = None

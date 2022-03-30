@@ -7,6 +7,7 @@ import omnifig as fig
 
 from . import tasks
 from . import community
+from .framework import util
 from .datasets import toy, mnist
 
 
@@ -42,10 +43,31 @@ def _download_community_directory(name, path, src_desc=None, silent=False):
 		print(f'{str(path)} has been copied to the community package "{name}".')
 	return dest
 
+import torch
 from tqdm import tqdm
+
+from .datasets import MNIST
+from .framework.extractors import Timm_Extractor
 
 @fig.Script('test')
 def _test_script(A):
+	dataset = MNIST()
+	
+	model = Timm_Extractor('mobilenetv3_large_100', din=dataset.get_space('observation'))
+	
+	dataset.load();
+	
+	batch = dataset.get_batch()
+	X, Y = batch['observation'], batch['target']
+	
+	with torch.no_grad():
+		Z = model(X)
+	print(X.shape, Y.shape, Z.shape)
+	
+	print(model)
+	
+	return
+	
 	dataset = mnist.CIFAR10().load()
 	print(len(dataset))
 	dataset = mnist.CIFAR10(mode='test').load()

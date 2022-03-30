@@ -1,13 +1,53 @@
 
 
 import torch
-
+from omnibelt import agnosticmethod
 from .base import Function
 
 
-class Encoder(Function):
-	def encode(self, observation):
+# class ModelBuilder:
+# 	@agnosticmethod
+# 	def build(self, dataset):
+# 		raise NotImplementedError
+
+
+class Model:
+	@classmethod
+	def builder(cls, *args, **kwargs):
+		return cls.Builder(*args, cls=cls, **kwargs)
+		
+	
+	class Builder:
+		def __init__(self, *args, cls=None, **kwargs):
+			if cls is None:
+				raise self.MissingSourceClassError
+			self.cls = cls
+			
+		
+		class MissingSourceClassError(Exception):
+			def __init__(self):
+				super().__init__('You cannot instantiate a builder without a source class '
+				                 '(use create_builder() instead)')
+			
+
+		def __call__(self, *args, **kwargs):
+			return self.build(*args, **kwargs)
+		
+
+		def build(self, *args, **kwargs):
+			return self.cls(*args, **kwargs)
+
+
+
+class Extractor(Function):
+	def extract(self, observation):
 		return self(observation)
+
+
+
+class Encoder(Extractor):
+	def encode(self, observation):
+		return self.extract(observation)
 
 
 
@@ -18,7 +58,7 @@ class Decoder(Function):
 
 
 class Generator(Function):
-	def generate(self, N: int):
+	def generate(self, N: int, gen=None):
 		raise NotImplementedError
 
 
@@ -26,12 +66,6 @@ class Generator(Function):
 class Discriminator(Function):
 	def judge(self, observation):
 		raise NotImplementedError
-
-
-
-class Extractor(Encoder):
-	def extract(self, observation):
-		return self.encode(observation)
 
 
 

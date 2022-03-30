@@ -2,33 +2,9 @@
 import torch
 from omnibelt import get_printer
 from ...framework import util
-from ..base import Task, BatchedTask, ResultsContainer
+from ..base import Task, BatchedTask
 
 prt = get_printer(__file__)
-
-
-
-class AccumulationContainer(ResultsContainer):
-	def __init__(self, **kwargs):
-		super().__init__(**kwargs)
-		self.distances = []
-		self.true_distances = []
-
-
-	def accumulate_distances(self, distances):
-		self.distances.append(distances)
-
-
-	def accumulate_true_distances(self, distances):
-		self.true_distances.append(distances)
-
-
-	def aggregate_distances(self):
-		return torch.cat(self.distances)
-
-
-	def aggregate_true_distances(self):
-		return torch.cat(self.true_distances)
 
 
 

@@ -4,7 +4,7 @@ from omnibelt import unspecified_argument, duplicate_instance, InitWall
 
 
 
-class WrappedTensor(InitWall, torch.Tensor):
+class WrappedTensor(torch.Tensor):
 	@staticmethod
 	def __new__(cls, src, *args, **kwargs):
 		return super().__new__(cls, src)

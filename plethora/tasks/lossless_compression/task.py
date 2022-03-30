@@ -1,6 +1,6 @@
 import torch
 from omnibelt import get_printer
-from ..base import Task, BatchedTask, ResultsContainer
+from ..base import Task, BatchedTask
 
 from .bits_back import BitsBackCompressor
 

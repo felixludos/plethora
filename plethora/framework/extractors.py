@@ -9,7 +9,7 @@ from ..framework.util import spaces
 
 
 class Extractor(nn.Module):
-	def get_extractor_key(self):
+	def get_encoder_fingerprint(self):
 		raise NotImplementedError
 
 
@@ -70,7 +70,7 @@ class Timm_Extractor(Extractor):
 			Cin, Hin, Win = din.shape if isinstance(din, spaces.DimSpec) else din
 			if Cin != 3:
 				self._fix_channels = True
-			factor = self.model.feature_info['reduction']
+			factor = self.model.feature_info[-1]['reduction']
 			if Hin is not None:
 				Hout = int(np.ceil(Hin/factor))
 			if Win is not None:
@@ -96,6 +96,7 @@ class Timm_Extractor(Extractor):
 		f = self.model.forward_features(x)
 		if self.pool is not None:
 			f = self.pool(f)
+			f = f.view(f.size(0), -1)
 		return f
 
 
