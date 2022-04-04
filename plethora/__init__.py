@@ -53,7 +53,7 @@ from .framework.extractors import Timm_Extractor
 def _test_script(A):
 	dataset = MNIST()
 	
-	model = Timm_Extractor('mobilenetv3_large_100', din=dataset.get_space('observation'))
+	model = Timm_Extractor('mobilenetv3_large_100', din=dataset.space_of('observation'))
 	
 	dataset.load();
 	
@@ -118,7 +118,7 @@ def _test_script(A):
 	print(len(dataset))
 
 	print(dataset.get_observation().shape)
-	print(dataset.get_observation_space().sample(10).shape)
+	print(dataset.observation_space.sample(10).shape)
 
 	print(dataset.get_label().shape)
 

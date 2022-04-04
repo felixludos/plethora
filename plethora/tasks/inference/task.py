@@ -1,4 +1,4 @@
-from omnibelt import get_printer
+from omnibelt import get_printer, unspecified_argument
 
 from ...framework.util import spaces
 from ..base import Task, BatchedTask, SimpleEvaluationTask
@@ -8,28 +8,68 @@ prt = get_printer(__file__)
 
 
 
-class AbstractInferenceTask(Task):
+class DownstreamTask(Task):
+	def __init__(self, dataset=None, encoder=None, **kwargs):
+		self.encoder = encoder
+		super().__init__(**kwargs)
+		if dataset is not None:
+			dataset = self._wrap_dataset(dataset)
+		self.dataset = dataset
+
+
+	class ObservationBuffer(EncodableDataset.EncodedBuffer):
+		pass
+
+
+	def _wrap_dataset(self, dataset):
+		dataset = dataset.copy()
+		dataset.register_buffer('observation', self.ObservationBuffer(encoder=getattr(self, 'encoder', None),
+		                                                     source=dataset.get_buffer('observation')))
+		return dataset
+
+
+	class ResultsContainer(Task.ResultsContainer):
+		@property
+		def encoder(self):
+			return self._encoder
+		@encoder.setter
+		def encoder(self, encoder):
+			self._encoder = encoder
+			self.dataset.get_buffer('observation').encoder = encoder
+
+
+
+class AbstractInferenceTask(DownstreamTask):
 	def __init__(self, encoder=None, eval_split=0.2, **kwargs):
 		super().__init__(**kwargs)
 		self.encoder = encoder
 		self.eval_split = eval_split
 	
 	
-	class ResultsContainer(Task.ResultsContainer):
+	class ResultsContainer(DownstreamTask.ResultsContainer):
 		def train(self):
 			self.dataset = self.train_dataset
 	
 	
 		def eval(self):
 			self.dataset = self.eval_dataset
-			
-		
-		def get_din(self):
-			return self.dataset.get_observation_space()
-		
-		
-		def get_dout(self):
-			return self.dataset.get_target_space()
+
+
+		# @Node.importance.setter
+		# def importance(self, new_importance):
+		# 	# You can change the order of these two lines:
+		# 	assert new_importance >= 3
+		# 	Node.importance.fset(self, new_importance)
+
+
+		@property
+		def din(self):
+			return self.dataset.observation_space
+
+
+		@property
+		def dout(self):
+			return self.dataset.target_space
 	
 	
 	def prepare(self, **kwargs):
@@ -41,9 +81,9 @@ class AbstractInferenceTask(Task):
 	
 	@classmethod
 	def run(cls, info):
-		info.train()
+		# info.train()
 		cls._train(info)
-		info.eval()
+		# info.eval()
 		cls._eval(info)
 		return info
 
@@ -64,6 +104,20 @@ class AbstractInferenceTask(Task):
 
 
 
+class InferenceTask(AbstractInferenceTask):
+	@staticmethod
+	def _train(info):
+		info.estimator.fit(info.train_dataset)
+		return info
+
+
+	@staticmethod
+	def _eval(info):
+		info.estimator.evaluate(info.eval_dataset)
+		return info
+
+
+
 class Scikit_InferenceTask(AbstractInferenceTask):
 	def prepare(self, **kwargs):
 		info = super().prepare(**kwargs)
@@ -71,9 +125,7 @@ class Scikit_InferenceTask(AbstractInferenceTask):
 		info.use_joint = isinstance(info.estimator, list)
 		return info
 	
-	
-	class ObservationBuffer(EncodableDataset.EncodedBuffer):
-		pass
+
 	#
 	#
 	# class TargetBuffer(WrappedBuffer):

@@ -13,9 +13,17 @@ class Task(Seeded): # TODO: specify random seed for reproducibility
 	def __init__(self, dataset=None, slim=False, online=False, score_key=None, **kwargs):
 		super().__init__(**kwargs)
 		self.dataset = dataset
-		self._slim = slim
 		self._online = online
+		self._slim = slim
 		self.score_key = score_key
+
+
+	@property
+	def dataset(self):
+		return self._dataset
+	@dataset.setter
+	def dataset(self, dataset):
+		self._dataset = dataset
 
 
 	@agnosticmethod
@@ -24,14 +32,21 @@ class Task(Seeded): # TODO: specify random seed for reproducibility
 
 	
 	class ResultsContainer(Seeded, Container):
-		pass
-		# def __init__(self, dataset, slim=False, online=False, **kwargs):
-		# 	super().__init__(**kwargs)
-		# 	self.dataset = dataset
-		# 	self.online = online
-		# 	self.slim = slim
+		def __init__(self, dataset=None, slim=False, online=False, **kwargs):
+			super().__init__(**kwargs)
+			self.dataset = dataset
+			self.online = online
+			self.slim = slim
 
-	
+
+		@property
+		def dataset(self):
+			return self._dataset
+		@dataset.setter
+		def dataset(self, dataset):
+			self._dataset = dataset
+
+
 	@classmethod
 	def create_results_container(cls, dataset=None, slim=False, online=False, **kwargs):
 		return cls.ResultsContainer(dataset=dataset, slim=slim, online=online, **kwargs)
@@ -86,8 +101,13 @@ class Task(Seeded): # TODO: specify random seed for reproducibility
 		'''
 		if info is None:
 			info = self.prepare(slim=slim, online=online, seed=seed, gen=gen, **kwargs)
+		return self._compute(info)
+
+
+	def _compute(self, info):
 		out = self.run(info)
 		return self.select_results(info, out, score_key=self.score_key)
+
 		
 
 
@@ -103,8 +123,17 @@ class BatchedTask(Task):
 	
 	
 	class ResultsContainer(Task.ResultsContainer):
-		def set_batch(self, batch):
-			self.batch = batch
+		def __init__(self, **kwargs):
+			super().__init__(**kwargs)
+			self._batch = None
+
+
+		@property
+		def batch(self):
+			return self._batch
+		@batch.setter
+		def batch(self, batch):
+			self._batch = batch
 		
 		
 		def _find_missing(self, key, **kwargs):
@@ -114,8 +143,8 @@ class BatchedTask(Task):
 			return super()._find_missing(key)
 		
 	
-	def compute(self, info=None, batch=None, **kwargs):
-		info = self.prepare(info=info, **kwargs)
+	def _compute(self, info):
+		batch = info['batch']
 		out = self.run(info=info, batch=batch, num_samples=self._num_samples, batch_size=self._batch_size,
 		               force_batch_size=self._force_batch_size, hard_sample_limit=self._hard_sample_limit,
 		               pbar=self._pbar)

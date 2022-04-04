@@ -8,7 +8,7 @@ from omnibelt import unspecified_argument, duplicate_instance, md5
 import h5py as hf
 
 from ..framework import base, Sourced
-from .buffers import TensorBuffer, WrappedBuffer, HDFBuffer
+from .buffers import FixedBuffer, TensorBuffer, WrappedBuffer, HDFBuffer
 
 class MissingModeError(Exception):
 	pass
@@ -25,7 +25,7 @@ class Iterable:
 		first = True
 		while first or infinite:
 			for sel in self.generate_selections(**kwargs):
-				yield self.create_batch(sel=sel)
+				yield self._create_batch(sel=sel)
 			first = False
 
 
@@ -45,7 +45,7 @@ class Iterable:
 		raise NotImplementedError
 
 
-	def create_batch(self, sel=None, **kwargs):
+	def _create_batch(self, sel=None, **kwargs):
 		raise NotImplementedError
 	
 
@@ -153,7 +153,7 @@ class Batchable(Iterable, base.Seeded):
 						break
 				if pbar is not None:
 					pbar.update(N)
-				yield self.create_batch(sel=sel)
+				yield self._create_batch(sel=sel)
 				if total_samples is not None and total_samples <= 0:
 					break
 		if pbar is not None:
@@ -184,8 +184,9 @@ class Batch(Batchable, base.Container):
 		return list(self.source.buffers.keys())
 
 
-	def get_space(self, name):
-		return self.source.get_space(name)
+	@property
+	def space_of(self, name):
+		return self.source.space_of(name)
 
 	
 	def is_cached(self, item):
@@ -209,7 +210,7 @@ class Batch(Batchable, base.Container):
 		return len(self.sel)
 
 
-	def create_batch(self, batch_type=None, **kwargs):
+	def _create_batch(self, batch_type=None, **kwargs):
 		if batch_type is None:
 			batch_type = self.__class__
 		return batch_type(self.source, **kwargs)
@@ -289,7 +290,7 @@ class DataCollection(Iterable, base.Buffer):
 				kwargs['data'] = buffer
 			buffer = self._default_buffer_factory(name, buffer_type=buffer_type, **kwargs)
 		if space is not unspecified_argument:
-			buffer.set_space(space)
+			buffer.space = space
 		self.buffers[name] = buffer
 		return self.buffers[name]
 
@@ -307,10 +308,10 @@ class DataCollection(Iterable, base.Buffer):
 			self.register_buffer(new, buffer)
 
 
-	def get_space(self, name):
+	def space_of(self, name):
 		if name not in self.buffers:
 			raise BufferNotFoundError(name)
-		return self.buffers[name].get_space()
+		return self.buffers[name].space
 
 
 	def _load(self, *args, **kwargs):
@@ -369,7 +370,7 @@ class DataCollection(Iterable, base.Buffer):
 
 
 	
-class Dataset(DataCollection, Batchable, base.FixedBuffer):
+class Dataset(DataCollection, Batchable, FixedBuffer):
 	def __init__(self, **kwargs):
 		super().__init__(**kwargs)
 		self._subset_src = None
@@ -385,7 +386,7 @@ class Dataset(DataCollection, Batchable, base.FixedBuffer):
 
 
 	_default_batch_type = Batch
-	def create_batch(self, batch_type=None, **kwargs):
+	def _create_batch(self, batch_type=None, **kwargs):
 		if batch_type is None:
 			batch_type = self._default_batch_type
 		return batch_type(self, **kwargs)
@@ -504,11 +505,12 @@ class Dataset(DataCollection, Batchable, base.FixedBuffer):
 class ObservationDataset(Dataset):
 	@property
 	def din(self):
-		return self.get_observation_space()
+		return self.observation_space
 
 
-	def get_observation_space(self):
-		return self.get_space('observation')
+	@property
+	def observation_space(self):
+		return self.space_of('observation')
 
 
 	def get_observation(self, sel=None, **kwargs):
@@ -532,11 +534,12 @@ class ObservationDataset(Dataset):
 class SupervisedDataset(ObservationDataset):
 	@property
 	def dout(self):
-		return self.get_target_space()
+		return self.target_space
 
 
-	def get_target_space(self):
-		return self.get_space('target')
+	@property
+	def target_space(self):
+		return self.space_of('target')
 
 
 	def get_target(self, sel=None, **kwargs):
@@ -553,8 +556,9 @@ class SupervisedDataset(ObservationDataset):
 
 
 class LabeledDataset(SupervisedDataset):
-	def get_label_space(self):
-		return self.get_space('label')
+	@property
+	def label_space(self):
+		return self.space_of('label')
 
 
 	def get_label(self, sel=None, **kwargs):
@@ -594,8 +598,9 @@ class SyntheticDataset(LabeledDataset):
 		self._standardize_scale = standardize_scale
 
 
-	def get_mechanism_space(self):
-		return self.get_space('mechanism') if self._distinct_mechanisms else self.get_label_space()
+	@property
+	def mechanism_space(self):
+		return self.space_of('mechanism') if self._distinct_mechanisms else self.label_space
 
 
 	def _load(self, *args, **kwargs):
@@ -715,20 +720,24 @@ class EncodableDataset(ObservationDataset, SourcedDataset):
 	def __init__(self, encoder=None, replace_observation_key=None, encoded_key='encoded',
 	             encoded_file_name='aux', encode_on_load=False, save_encoded=False, encode_pbar=None, **kwargs):
 		super().__init__(**kwargs)
-		self.encoder = encoder
 		self._replace_observation_key = replace_observation_key
 		self._encoded_observation_key = encoded_key
 		self._encoded_file_name = encoded_file_name
 		self._encode_on_load = encode_on_load
 		self._save_encoded = save_encoded
 		self._encode_pbar = encode_pbar
+		self.encoder = encoder
 	
-	
-	def set_encoder(self, encoder):
+
+	@property
+	def encoder(self):
+		return self._encoder
+	@encoder.setter
+	def encoder(self, encoder):
 		buffer = self.get_buffer(self._encoded_observation_key)
 		if buffer is not None:
-			buffer.set_encoder(encoder)
-		self.encoder = encoder
+			buffer.encoder = encoder
+		self._encoder = encoder
 	
 	
 	def _get_code_path(self, file_name='aux', root=None):
@@ -796,19 +805,24 @@ class EncodableDataset(ObservationDataset, SourcedDataset):
 	class EncodedBuffer(WrappedBuffer):
 		def __init__(self, encoder=None, **kwargs):
 			super().__init__(**kwargs)
+			self.encoder = encoder
 			self.set_encoder(encoder)
 			
-			
-		def set_encoder(self, encoder=None):
-			self.encoder = encoder
-			if self.encoder is not None:
-				self.set_space(self.encoder.dout)
+
+		@property
+		def encoder(self):
+			return self._encoder
+		@encoder.setter
+		def encoder(self, encoder):
+			self._encoder = encoder
+			if encoder is not None:
+				self.space = encoder.dout
 		
 		
 		def _get(self, sel=None, device=None, **kwargs):
 			sample = super()._get(sel=sel, device=device, **kwargs)
 			if self.data is None and self.encoder is not None:
-				sample = self.encoder(sample)
+				sample = self.encoder.encode(sample)
 			return sample
 
 

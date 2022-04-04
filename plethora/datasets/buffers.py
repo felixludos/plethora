@@ -5,8 +5,78 @@ import h5py as hf
 from ..framework import base, Sourced
 
 
+class FixedBuffer(base.Buffer): # fixed number of samples (possibly not known until after loading)
 
-class TensorBuffer(base.FixedBuffer):
+	# def _get(self, indices=None, device=None, **kwargs):
+	# 	return super()._get(indices, device=device, **kwargs)
+	#
+	#
+	# def get(self, indices=None, device=None, **kwargs):
+	# 	return super().get(indices, device=device, **kwargs)
+
+
+	def _update(self, sel=None, **kwargs):
+		raise NotImplementedError
+
+
+	def _store_update(self, sel=None, **kwargs):
+		if self._waiting_update is not None and sel is not None:
+			sel = self._waiting_update[sel]
+		return sel
+
+
+	def _apply_update(self, sel, **kwargs):
+		return super()._apply_update(dict(sel=sel, **kwargs))
+
+
+	def _load_sel(self, sel=None, **kwargs):
+		raise NotImplementedError
+
+
+	def _load(self, **kwargs):
+		return self._load_sel(**kwargs)
+
+
+	def load(self, **kwargs):
+		if not self.is_loaded() and self._waiting_update is not None:
+			try:
+				self._load_sel(sel=self._waiting_update, **kwargs)
+			except NotImplementedError:
+				pass # _load + _update will be called in super().load
+			else:
+				self._waiting_update = None
+		return super().load(**kwargs)
+
+
+	def _count(self):
+		raise NotImplementedError
+
+
+	def count(self):
+		if self.is_loaded():
+			return self._count()
+		if self._waiting_update is not None:
+			return len(self._waiting_update)
+		if self._default_len is not None:
+			return self._default_len
+		raise self.NotLoadedError(self)
+
+
+	def __len__(self):
+		return self.count()
+
+
+	def __getitem__(self, item):
+		return self.get(item)
+
+
+
+class UnlimitedBuffer(base.Buffer):
+	pass
+
+
+
+class TensorBuffer(FixedBuffer):
 	def __init__(self, data=None, **kwargs):
 		super().__init__(**kwargs)
 		self.data = None
@@ -43,7 +113,7 @@ class TensorBuffer(base.FixedBuffer):
 
 
 
-class HDFBuffer(base.FixedBuffer):
+class HDFBuffer(FixedBuffer):
 	def __init__(self, dataset_name=None, path=None, default_len=None, shape=None, **kwargs):
 		if path is not None and path.exists() and dataset_name is not None:
 			with hf.File(str(path), 'r') as f:
@@ -118,11 +188,11 @@ class WrappedBuffer(TensorBuffer):
 		if self.is_loaded() and self.source is not None:
 			self.set_data(self._get(sel=self.sel, device=self.device, **kwargs))
 			self.sel = None
-			self.set_space(self.get_space())
+			self.space = self.space
 			# self._loaded = self.source._loaded
 			# self.set_source()
 			return
-		raise base.NotLoadedError(self)
+		raise self.NotLoadedError(self)
 
 
 	def merge(self, new_instance=None):
@@ -138,10 +208,14 @@ class WrappedBuffer(TensorBuffer):
 		self.source = source
 
 
-	def get_space(self):
-		if self.space is None:
-			return self.source.get_space()
+	@property
+	def space(self):
+		if self._space is None:
+			return self.source.space
 		return self.space
+	@space.setter
+	def space(self, space):
+		self._space = space
 
 
 	def _load(self, *args, **kwargs):

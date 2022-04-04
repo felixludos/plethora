@@ -12,22 +12,10 @@ class BufferTransform:
 		return sample
 
 
-# class BufferUpdateFailedError(NotImplementedError):
-# 	pass
-
-class NotLoadedError(Exception):
-	def __init__(self, buffer):
-		super().__init__(f'{buffer}')
-
-
 
 class Buffer(BufferTransform, Loadable, DeviceContainer, Seeded):
-	space = None
-
-	def __init__(self, space=unspecified_argument, transforms=None, default_len=None, **kwargs):
+	def __init__(self, space=None, transforms=None, default_len=None, **kwargs):
 		super().__init__(**kwargs)
-		if space is unspecified_argument:
-			space = self.space
 		if transforms is None:
 			transforms = []
 		self.space = space
@@ -40,12 +28,12 @@ class Buffer(BufferTransform, Loadable, DeviceContainer, Seeded):
 		return duplicate_instance(self) # shallow copy
 
 
-	def set_space(self, space):
-		self.space = space
-
-
-	def get_space(self):
-		return self.space
+	@property
+	def space(self):
+		return self._space
+	@space.setter
+	def space(self, space):
+		self._space = space
 
 
 	def _update(self, **kwargs):
@@ -88,6 +76,11 @@ class Buffer(BufferTransform, Loadable, DeviceContainer, Seeded):
 		raise NotImplementedError
 
 
+	class NotLoadedError(Exception):
+		def __init__(self, buffer):
+			super().__init__(f'{buffer}')
+
+
 	def get(self, sel=None, device=None, **kwargs):
 		if not self.is_loaded():
 			raise NotLoadedError(self)
@@ -96,80 +89,9 @@ class Buffer(BufferTransform, Loadable, DeviceContainer, Seeded):
 
 
 
-class FixedBuffer(Buffer): # fixed number of samples (possibly not known until after loading)
-
-	# def _get(self, indices=None, device=None, **kwargs):
-	# 	return super()._get(indices, device=device, **kwargs)
-	#
-	#
-	# def get(self, indices=None, device=None, **kwargs):
-	# 	return super().get(indices, device=device, **kwargs)
-
-
-	def _update(self, sel=None, **kwargs):
-		raise NotImplementedError
-
-
-	def _store_update(self, sel=None, **kwargs):
-		if self._waiting_update is not None and sel is not None:
-			sel = self._waiting_update[sel]
-		return sel
-
-
-	def _apply_update(self, sel, **kwargs):
-		return super()._apply_update(dict(sel=sel, **kwargs))
-
-
-	def _load_sel(self, sel=None, **kwargs):
-		raise NotImplementedError
-
-
-	def _load(self, **kwargs):
-		return self._load_sel(**kwargs)
-
-
-	def load(self, **kwargs):
-		if not self.is_loaded() and self._waiting_update is not None:
-			try:
-				self._load_sel(sel=self._waiting_update, **kwargs)
-			except NotImplementedError:
-				pass # _load + _update will be called in super().load
-			else:
-				self._waiting_update = None
-		return super().load(**kwargs)
-
-
-	def _count(self):
-		raise NotImplementedError
-
-
-	def count(self):
-		if self.is_loaded():
-			return self._count()
-		if self._waiting_update is not None:
-			return len(self._waiting_update)
-		if self._default_len is not None:
-			return self._default_len
-		raise NotLoadedError(self)
-
-
-	def __len__(self):
-		return self.count()
-
-
-	def __getitem__(self, item):
-		return self.get(item)
-
-
-
-class UnlimitedBuffer(Buffer):
-	pass
-
-
-
 class Function(Device):
 	din, dout = None, None
-	
+
 	def __init__(self, *args, din=unspecified_argument, dout=unspecified_argument, **kwargs):
 		super().__init__(*args, **kwargs)
 		if din is unspecified_argument:

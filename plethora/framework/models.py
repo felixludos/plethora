@@ -1,7 +1,7 @@
 
 
 import torch
-from omnibelt import agnosticmethod
+from omnibelt import agnosticmethod, mix_into
 from .base import Function
 
 
@@ -11,31 +11,107 @@ from .base import Function
 # 		raise NotImplementedError
 
 
-class Model:
+class ModelBuilder:
+	def __init__(self, **kwargs):
+		self.__dict__.update(kwargs)
+
+
+	def __call__(self, **kwargs):
+		self.__dict__.update(kwargs)
+		return self.build()
+
+
+	class MissingKwargsError(Exception):
+		def __init__(self, *keys):
+			super().__init__(', '.join(keys))
+			self.keys = keys
+
+
+	def build(self):
+		raise NotImplementedError
+
+
+
+class Resultable:
+	class ResultsContainer(Seeded, Container):
+		def __init__(self, source=None, dataset=None, _skip_super_init=False, **kwargs):
+			if not _skip_super_init:
+				super().__init__(**kwargs)
+				self.dataset = dataset
+				if source is None:
+					source = dataset
+				self.source = source
+
+
+		def _load_missing(self, key, sel=None, **kwargs):
+			return self.source.get(key, sel=sel, **kwargs)
+
+
+		def _find_missing(self, key, **kwargs):
+			if self.source is not None:
+				self[key] = self._load_missing(key, **kwargs) # load and cache
+				return self[key]
+			return super()._find_missing(key)
+
+
+	def integrate_results(self, info):
+		if not isinstance(info, self.ResultsContainer):
+			info = mix_into(self.ResultsContainer, info)
+		return info
+
+
+	@classmethod
+	def create_results_container(cls, **kwargs):
+		return cls.ResultsContainer(**kwargs)
+
+
+
+class Buildable:
 	@classmethod
 	def builder(cls, *args, **kwargs):
 		return cls.Builder(*args, cls=cls, **kwargs)
-		
-	
-	class Builder:
-		def __init__(self, *args, cls=None, **kwargs):
+
+	class Builder(ModelBuilder):
+		def __init__(self, cls=None, **kwargs):
+			super().__init__(**kwargs)
 			if cls is None:
 				raise self.MissingSourceClassError
 			self.cls = cls
-			
-		
+
 		class MissingSourceClassError(Exception):
 			def __init__(self):
 				super().__init__('You cannot instantiate a builder without a source class '
-				                 '(use create_builder() instead)')
-			
+				                 '(use builder() instead)')
 
-		def __call__(self, *args, **kwargs):
-			return self.build(*args, **kwargs)
-		
+		def build(self):
+			kwargs = self.__dict__.copy()
+			del kwargs['cls']
+			return self.cls(**kwargs)
 
-		def build(self, *args, **kwargs):
-			return self.cls(*args, **kwargs)
+
+
+class Computable(Resultable):
+	def compute(self, **kwargs):
+		pass
+
+	def _compute(self, **kwargs):
+		raise NotImplementedError
+
+
+
+class Fitable(Resultable):
+	def fit(self, source):
+		raise NotImplementedError
+
+
+
+class Model(Resultable, Buildable):
+
+
+
+	def evaluate(self, source):
+		raise NotImplementedError
+
 
 
 
