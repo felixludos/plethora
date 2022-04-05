@@ -5,7 +5,7 @@ from torch.nn import functional as F
 import torchvision
 
 from .base import Dataset, SupervisedDataset, TensorBuffer, ImageDataset
-from ..framework.base import Buffer, FixedBuffer
+from ..framework.base import AbstractBuffer, FixedBuffer
 from ..framework.util import spaces
 from ..framework import Sourced
 

@@ -5,7 +5,7 @@ import h5py as hf
 from ..framework import base, Sourced
 
 
-class FixedBuffer(base.Buffer): # fixed number of samples (possibly not known until after loading)
+class FixedBuffer(base.AbstractBuffer): # fixed number of samples (possibly not known until after loading)
 
 	# def _get(self, indices=None, device=None, **kwargs):
 	# 	return super()._get(indices, device=device, **kwargs)
@@ -71,7 +71,7 @@ class FixedBuffer(base.Buffer): # fixed number of samples (possibly not known un
 
 
 
-class UnlimitedBuffer(base.Buffer):
+class UnlimitedBuffer(base.AbstractBuffer):
 	pass
 
 
@@ -234,6 +234,22 @@ class WrappedBuffer(TensorBuffer):
 			sel = self.sel if sel is None else self.sel[sel]
 		assert self.source is not None, 'missing source'
 		return self.source.get(sel, device=device, **kwargs)
+
+
+
+class NarrowBuffer(WrappedBuffer):
+	def __init__(self, start=None, size=1, dim=1, **kwargs):
+		super().__init__(**kwargs)
+		self._dim = dim
+		self._start = start
+		self._size = size
+
+
+	def get(self, sel=None, device=None, **kwargs):
+		sample = super().get(sel=sel, device=device, **kwargs)
+		if self._start is not None:
+			sample = sample.narrow(self._dim, self._start, self._size)
+		return sample
 
 
 

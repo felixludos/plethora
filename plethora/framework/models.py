@@ -2,7 +2,7 @@
 
 import torch
 from omnibelt import agnosticmethod, mix_into
-from .base import Function
+from .base import Function, Container
 
 
 # class ModelBuilder:
@@ -33,14 +33,27 @@ class ModelBuilder:
 
 
 class Resultable:
+	score_key = None
+
+	def __init__(self, *args, score_key=None, **kwargs):
+		super().__init__(*args, **kwargs)
+		if score_key is None:
+			self.score_key = score_key
+
+
 	class ResultsContainer(Seeded, Container):
-		def __init__(self, source=None, dataset=None, _skip_super_init=False, **kwargs):
-			if not _skip_super_init:
-				super().__init__(**kwargs)
-				self.dataset = dataset
-				if source is None:
-					source = dataset
-				self.source = source
+		def __init__(self, source=None, dataset=None, score_key=None, **kwargs):
+			# if not _skip_super_init:
+			super().__init__(**kwargs)
+			self.dataset = dataset
+			if source is None:
+				source = dataset
+			self.source = source
+			self._score_key = score_key
+
+
+		class NoScoreKeyError(Exception):
+			pass
 
 
 		def _load_missing(self, key, sel=None, **kwargs):
@@ -48,21 +61,32 @@ class Resultable:
 
 
 		def _find_missing(self, key, **kwargs):
+			if key == 'score':
+				if self._score_key is None:
+					raise self.NoScoreKeyError
+				return self[self._score_key]
 			if self.source is not None:
 				self[key] = self._load_missing(key, **kwargs) # load and cache
 				return self[key]
 			return super()._find_missing(key)
 
 
-	def integrate_results(self, info):
-		if not isinstance(info, self.ResultsContainer):
-			info = mix_into(self.ResultsContainer, info)
-		return info
-
-
 	@classmethod
-	def create_results_container(cls, **kwargs):
-		return cls.ResultsContainer(**kwargs)
+	def _integrate_results(cls, info, **kwargs):
+		raise NotImplementedError # TODO
+		if not isinstance(info, cls.ResultsContainer):
+			new = mix_into(cls.ResultsContainer, info)
+		# TODO: run __init__ of new super classes with **kwargs
+		return new
+
+
+	@agnosticmethod
+	def create_results_container(self, info=None, score_key=None, **kwargs):
+		if score_key is None:
+			score_key = self.score_key
+		if info is not None:
+			return self._integrate_results(info, score_key=score_key, **kwargs)
+		return self.ResultsContainer(score_key=score_key, **kwargs)
 
 
 
@@ -71,6 +95,7 @@ class Buildable:
 	def builder(cls, *args, **kwargs):
 		return cls.Builder(*args, cls=cls, **kwargs)
 
+
 	class Builder(ModelBuilder):
 		def __init__(self, cls=None, **kwargs):
 			super().__init__(**kwargs)
@@ -78,10 +103,12 @@ class Buildable:
 				raise self.MissingSourceClassError
 			self.cls = cls
 
+
 		class MissingSourceClassError(Exception):
 			def __init__(self):
 				super().__init__('You cannot instantiate a builder without a source class '
 				                 '(use builder() instead)')
+
 
 		def build(self):
 			kwargs = self.__dict__.copy()
@@ -92,26 +119,67 @@ class Buildable:
 
 class Computable(Resultable):
 	def compute(self, **kwargs):
-		pass
-
-	def _compute(self, **kwargs):
-		raise NotImplementedError
+		info = self.create_results_container(**kwargs)
+		return self._compute(info)
 
 
-
-class Fitable(Resultable):
-	def fit(self, source):
+	@staticmethod
+	def _compute(info):
 		raise NotImplementedError
 
 
 
 class Model(Resultable, Buildable):
+	@agnosticmethod
+	def create_fit_results_container(self, **kwrags):
+		return self.create_results_container(**kwargs)
 
 
+	def fit(self, source, **kwargs):
+		info = self.create_fit_results_container(**kwargs)
+		return self._fit(info)
 
-	def evaluate(self, source):
+
+	@staticmethod
+	def _fit(info):
 		raise NotImplementedError
 
+
+	def evaluate(self, source, **kwargs):
+		info = self.create_results_container(**kwargs)
+		return self._evaluate(info)
+
+
+	@staticmethod
+	def _evaluate(info):
+		raise NotImplementedError
+
+
+
+class IterativeModel(Model):
+	@classmethod
+	def create_step_results_container(cls, **kwargs):
+		return cls.create_results_container(**kwargs)
+
+
+	def fit(self, source, info=None, **kwargs):
+		# TODO: load default trainer and optimize (wrap this loop with the trainer)
+		for batch in source.get_iterator():
+			out = self.step(source, info=info, **kwargs)
+		return out
+
+
+	def step(self, source, info=None, **kwargs):
+		info = self.create_step_results_container(info=info, **kwargs)
+		return self._step(info)
+
+
+	def _step(self, info):
+		raise NotImplementedError
+
+
+
+# Types of Models
 
 
 

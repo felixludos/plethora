@@ -13,7 +13,7 @@ class BufferTransform:
 
 
 
-class Buffer(BufferTransform, Loadable, DeviceContainer, Seeded):
+class AbstractBuffer(BufferTransform, Loadable, DeviceContainer, Seeded):
 	def __init__(self, space=None, transforms=None, default_len=None, **kwargs):
 		super().__init__(**kwargs)
 		if transforms is None:
@@ -94,10 +94,10 @@ class Function(Device):
 
 	def __init__(self, *args, din=unspecified_argument, dout=unspecified_argument, **kwargs):
 		super().__init__(*args, **kwargs)
-		if din is unspecified_argument:
-			din = self.din
-		if dout is unspecified_argument:
-			dout = self.dout
+		if din is not unspecified_argument:
+			self.din = din
+		if dout is not unspecified_argument:
+			self.dout = dout
 		self.din, self.dout = din, dout
 
 	

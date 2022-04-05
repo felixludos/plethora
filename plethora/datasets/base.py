@@ -10,13 +10,6 @@ import h5py as hf
 from ..framework import base, Sourced
 from .buffers import FixedBuffer, TensorBuffer, WrappedBuffer, HDFBuffer
 
-class MissingModeError(Exception):
-	pass
-
-
-
-class BufferNotFoundError(Exception):
-	pass
 
 
 
@@ -162,11 +155,18 @@ class Batchable(Iterable, base.Seeded):
 
 
 class Batch(Batchable, base.Container):
-	def __init__(self, source, sel=None, **kwargs):
+	def __init__(self, source, sel=None, buffers={}, **kwargs):
 		super().__init__(**kwargs)
 		self.source = source
+		self.replacement_buffers = buffers.copy()
 		self.sel = sel
-	
+
+
+	def get_buffer(self, name):
+		if name in self.replacement_buffers:
+			return self.replacement_buffers[name]
+		return self.source.get_buffer(name)
+
 	
 	def get_iterator(self, *, sel=None, **kwargs):
 		if sel is None:
@@ -197,8 +197,20 @@ class Batch(Batchable, base.Container):
 		return super().__contains__(item) or (self.source is not None and item in self.source.buffers)
 
 
+	def get(self, key, default=None, sel=None, **kwargs):
+		if sel is None:
+			sel = self.sel
+		elif self.sel is not None:
+			sel = self.sel[sel]
+		if key in self.replacement_buffers:
+			if self.replacement_buffers[key] is not None:
+				return self.replacement_buffers[key].get(sel=self.sel)
+		elif key in self.source:
+			return self.source.get(key, sel=self.sel)
+		return default
+
+
 	def _find_missing(self, key, **kwargs):
-		val = self.source.get(key, self.sel, **kwargs)
 		if self.device is not None:
 			val = val.to(self.device)
 		self[key] = val # cache the results
@@ -226,7 +238,7 @@ class Batch(Batchable, base.Container):
 
 
 
-class DataCollection(Iterable, base.Buffer):
+class DataCollection(Iterable, base.AbstractBuffer):
 	name = None
 	
 	def __init__(self, *, name=None, mode=None,
@@ -249,6 +261,12 @@ class DataCollection(Iterable, base.Buffer):
 			if mode is not None:
 				modes[mode] = self
 		self._modes = modes
+
+
+	class BufferNotFoundError(Exception):
+		def __init__(self, *missing):
+			super().__init__(', '.join(missing))
+			self.missing = missing
 
 
 	def get_name(self):
@@ -283,8 +301,8 @@ class DataCollection(Iterable, base.Buffer):
 
 
 	def register_buffer(self, name, buffer=None, space=unspecified_argument, buffer_type=None, **kwargs):
-		if not isinstance(buffer, base.Buffer):
-			if buffer_type is None and type(buffer) == type and issubclass(buffer, base.Buffer):
+		if not isinstance(buffer, base.AbstractBuffer):
+			if buffer_type is None and type(buffer) == type and issubclass(buffer, base.AbstractBuffer):
 				buffer_type = buffer
 			if isinstance(buffer, torch.Tensor):
 				kwargs['data'] = buffer
@@ -310,7 +328,7 @@ class DataCollection(Iterable, base.Buffer):
 
 	def space_of(self, name):
 		if name not in self.buffers:
-			raise BufferNotFoundError(name)
+			raise self.BufferNotFoundError(name)
 		return self.buffers[name].space
 
 
@@ -325,7 +343,7 @@ class DataCollection(Iterable, base.Buffer):
 			if name not in self.buffers:
 				missing.append(name)
 		if len(missing):
-			raise BufferNotFoundError(', '.join(missing))
+			raise self.BufferNotFoundError(*missing)
 
 
 	def get_buffer(self, name):
@@ -336,8 +354,12 @@ class DataCollection(Iterable, base.Buffer):
 		return name in self.buffers
 
 
-	def _package_sample(self, sample, name, sel, **kwargs):
-		return sample
+	def __contains__(self, item):
+		return self.has_buffer(item)
+
+
+	# def _package_sample(self, sample, name, sel, **kwargs):
+	# 	return sample
 
 
 	def get(self, name, sel=None, **kwargs):
@@ -347,7 +369,8 @@ class DataCollection(Iterable, base.Buffer):
 	def _get(self, name, sel=None, **kwargs):
 		self._check_buffer_names(name)
 		sample = self.buffers[name].get(sel)
-		return self._package_sample(sample, name, sel, **kwargs)
+		return sample
+		# return self._package_sample(sample, name, sel, **kwargs)
 
 
 	def register_modes(self, **modes):
@@ -361,12 +384,16 @@ class DataCollection(Iterable, base.Buffer):
 		return self._mode
 
 
+	class MissingModeError(Exception):
+		pass
+
+
 	def get_mode(self, mode='train'):
 		if self.mode == mode:
 			return self
 		if mode in self._modes:
 			return self._modes[mode]
-		raise MissingModeError
+		raise self.MissingModeError
 
 
 	

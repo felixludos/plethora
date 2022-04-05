@@ -13,6 +13,7 @@ import numpy as np
 
 
 # TODO: include dtypes
+# TODO: include property "dof"
 
 
 class DimSpec(Packable):
