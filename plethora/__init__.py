@@ -55,7 +55,7 @@ def _test_script(A):
 	
 	model = Timm_Extractor('mobilenetv3_large_100', din=dataset.space_of('observation'))
 	
-	dataset.load();
+	dataset.prepare();
 	
 	batch = dataset.get_batch()
 	X, Y = batch['observation'], batch['target']
@@ -68,9 +68,9 @@ def _test_script(A):
 	
 	return
 	
-	dataset = mnist.CIFAR10().load()
+	dataset = mnist.CIFAR10().prepare()
 	print(len(dataset))
-	dataset = mnist.CIFAR10(mode='test').load()
+	dataset = mnist.CIFAR10(mode='test').prepare()
 	print(len(dataset))
 	
 	print(dataset)
@@ -88,16 +88,16 @@ def _test_script(A):
 	
 	lns = {}
 	for name in tqdm(classes_split_dict):
-		dataset = mnist.EMNIST(split=name).load()
+		dataset = mnist.EMNIST(split=name).prepare()
 		lns[name] = {'train': len(dataset)}
-		dataset = mnist.EMNIST(split=name, mode='test').load()
+		dataset = mnist.EMNIST(split=name, mode='test').prepare()
 		lns[name]['test'] = len(dataset)
 	print(lns)
 	
 	
 	print(len(dataset))
 	
-	dataset.load()
+	dataset.prepare()
 	
 	print(len(dataset))
 	
@@ -105,7 +105,7 @@ def _test_script(A):
 	
 	return
 	
-	dataset = toy.SwissRollDataset(10, noise=.1, seed=11).load()
+	dataset = toy.SwissRollDataset(10, noise=.1, seed=11).prepare()
 	
 	print(list(dataset.get_iterator(batch_size=4, num_samples=5, force_batch_size=False,
                           hard_limit=False, )))
@@ -113,7 +113,7 @@ def _test_script(A):
 
 	return
 
-	dataset = toy.SwissRollDataset(100).load()
+	dataset = toy.SwissRollDataset(100).prepare()
 
 	print(len(dataset))
 

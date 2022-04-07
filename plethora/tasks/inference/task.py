@@ -2,7 +2,7 @@ from omnibelt import get_printer, unspecified_argument
 
 from ...framework.util import spaces
 from ..base import Task, BatchedTask, SimpleEvaluationTask
-from ...datasets.base import EncodableDataset, WrappedBuffer, SupervisedDataset
+from ...datasets.base import EncodableDataset, BufferView, SupervisedDataset
 
 prt = get_printer(__file__)
 
@@ -17,10 +17,7 @@ class DownstreamTask(Task):
 		self.dataset = dataset
 
 
-	class ObservationBuffer(EncodableDataset.EncodedBuffer):
-		pass
-
-
+	ObservationBuffer = EncodableDataset.EncodedBuffer
 	def _wrap_dataset(self, dataset):
 		dataset = dataset.copy()
 		dataset.register_buffer('observation', self.ObservationBuffer(encoder=getattr(self, 'encoder', None),

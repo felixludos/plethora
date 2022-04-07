@@ -2,21 +2,87 @@
 import math
 import torch
 import h5py as hf
-from ..framework import base, Sourced
+from ..framework import base, Rooted, DeviceContainer
 
 
-class FixedBuffer(base.AbstractBuffer): # fixed number of samples (possibly not known until after loading)
+class TransformableBuffer(base.AbstractBuffer):
+	transforms = []
+	def __init__(self, transforms=None, **kwargs):
+		super().__init__(**kwargs)
+		if transforms is None:
+			transforms = self.transforms.copy()
+		self.transforms = transforms
 
-	# def _get(self, indices=None, device=None, **kwargs):
-	# 	return super()._get(indices, device=device, **kwargs)
-	#
-	#
-	# def get(self, indices=None, device=None, **kwargs):
-	# 	return super().get(indices, device=device, **kwargs)
+
+	def transform(self, sample=None):
+		for transform in self.transforms:
+			sample = transform(sample)
+		return sample
 
 
+	def get(self, sel=None, **kwargs):
+		return self.transform(super().get(sel=sel, **kwargs))
+
+
+
+class AbstractCountableData(base.AbstractData):
+	def __init__(self, default_len=None, **kwargs):
+		super().__init__(**kwargs)
+		self._default_len = default_len
+
+
+	def _size(self):
+		raise NotImplementedError
+
+
+	class UnknownCount(base.AbstractBuffer.NotReady):
+		def __init__(self):
+			super().__init__('did you forget to provide a "default_len" in __init__?')
+
+
+	def size(self):
+		if self.is_ready:
+			return self._size()
+		if self._default_len is not None:
+			return self._default_len
+		raise self.UnknownCount()
+
+
+	def __len__(self):
+		return self.size()
+
+
+class AbstractCountableDataView(AbstractCountableData, base.AbstractView):
+	def __init__(self, **kwargs):
+		super().__init__(**kwargs)
+		self._default_len = None
+
+
+	def size(self, **kwargs):
+		if self.sel is not None:
+			return len(self.sel)
+		return super().size()
+
+
+	def _size(self, **kwargs):
+		if self.source is None:
+			raise self.NoSource
+		return self.source.size(**kwargs)
+
+
+
+class AbstractFixedBuffer(AbstractCountableData, base.AbstractBuffer): # fixed number of samples (possibly not known until after loading)
 	def _update(self, sel=None, **kwargs):
 		raise NotImplementedError
+
+
+	def size(self):
+		try:
+			return super().size()
+		except self.UnknownCountError:
+			if self._waiting_update is not None:
+				return len(self._waiting_update)
+			raise self.UnknownCountError()
 
 
 	def _store_update(self, sel=None, **kwargs):
@@ -29,41 +95,23 @@ class FixedBuffer(base.AbstractBuffer): # fixed number of samples (possibly not 
 		return super()._apply_update(dict(sel=sel, **kwargs))
 
 
-	def _load_sel(self, sel=None, **kwargs):
+	def _prepare_sel(self, sel=None, **kwargs):
 		raise NotImplementedError
 
 
-	def _load(self, **kwargs):
-		return self._load_sel(**kwargs)
+	def _prepare(self, **kwargs):
+		return self._prepare_sel(**kwargs)
 
 
-	def load(self, **kwargs):
-		if not self.is_loaded() and self._waiting_update is not None:
+	def prepare(self, **kwargs):
+		if not self.is_ready and self._waiting_update is not None:
 			try:
-				self._load_sel(sel=self._waiting_update, **kwargs)
+				self._prepare_sel(sel=self._waiting_update, **kwargs)
 			except NotImplementedError:
 				pass # _load + _update will be called in super().load
 			else:
 				self._waiting_update = None
-		return super().load(**kwargs)
-
-
-	def _count(self):
-		raise NotImplementedError
-
-
-	def count(self):
-		if self.is_loaded():
-			return self._count()
-		if self._waiting_update is not None:
-			return len(self._waiting_update)
-		if self._default_len is not None:
-			return self._default_len
-		raise self.NotLoadedError(self)
-
-
-	def __len__(self):
-		return self.count()
+		return super().prepare(**kwargs)
 
 
 	def __getitem__(self, item):
@@ -71,33 +119,41 @@ class FixedBuffer(base.AbstractBuffer): # fixed number of samples (possibly not 
 
 
 
-class UnlimitedBuffer(base.AbstractBuffer):
-	pass
+# class UnlimitedBuffer(base.AbstractBuffer): # TODO: streams
+# 	pass
 
 
 
-class TensorBuffer(FixedBuffer):
+class Buffer(AbstractFixedBuffer, DeviceContainer):
 	def __init__(self, data=None, **kwargs):
 		super().__init__(**kwargs)
-		self.data = None
-		self.set_data(data)
+		self._register_deviced_children(_data=None)
+		self.data = data
 
 
-	def set_data(self, data=None):
-		# self.device = None if data is None else data.device
-		self.register_children(data=data)
+	@property
+	def data(self):
+		return self._data
+	@data.setter
+	def data(self, data=None):
+		self._data = data
 
-
-	def is_loaded(self):
+	@property
+	def is_ready(self):
 		return self.data is not None
 
 
-	def _count(self):
+	def _size(self):
 		return len(self.data)
 
 
-	def _load_sel(self, sel=None, **kwargs):
+	class MissingData(AbstractFixedBuffer.NotReady):
 		pass
+
+
+	def _prepare_sel(self, sel=None, **kwargs):
+		if self.data is None:
+			raise self.MissingData
 
 
 	def _get(self, sel=None, device=None, **kwargs):
@@ -113,28 +169,82 @@ class TensorBuffer(FixedBuffer):
 
 
 
-class HDFBuffer(FixedBuffer):
-	def __init__(self, dataset_name=None, path=None, default_len=None, shape=None, **kwargs):
+class RemoteBuffer(Buffer):
+	def __init__(self, auto_load=True, **kwargs):
+		super().__init__(**kwargs)
+		self._auto_load = auto_load
+
+
+	def _prepare_sel(self, sel=None, **kwargs):
+		if self._auto_load:
+			self.data = self._get(sel=sel)
+
+
+	def to_memory(self, **kwargs):
+		self.data = self.get(**kwargs)
+
+
+	def size(self):
+		if self.data is not None:
+			return super(RemoteBuffer, self)._size()
+		return super().size()
+
+
+	def get(self, sel=None, **kwargs):
+		if self.data is not None:
+			return super(RemoteBuffer, self)._get(sel=sel, **kwargs)
+		return super().get(sel=sel, **kwargs)
+
+
+	def update(self, sel=None, **kwargs):
+		if self.data is not None:
+			return super(RemoteBuffer, self)._update(sel=sel, **kwargs)
+		return super().update(sel=sel, **kwargs)
+
+
+
+
+class HDFBuffer(RemoteBuffer):
+	def __init__(self, dataset_name=None, path=None, default_len=None, shape=None, auto_load=True, **kwargs):
 		if path is not None and path.exists() and dataset_name is not None:
 			with hf.File(str(path), 'r') as f:
-				shape = f[dataset_name].shape
+				if dataset_name in f:
+					shape = f[dataset_name].shape
+				else:
+					print('WARNING: could not infer shape') # TODO: use logging
 		if default_len is None:
 			default_len = shape[0]
 		super().__init__(default_len=default_len, **kwargs)
 		self.path = path
 		self.key_name = dataset_name
 
+		self._auto_load = auto_load
+
 		self._shape = shape
 		self._selected = None
-		self.register_children(_selected=None)
+		self._register_deviced_children(_selected=None)
 
 
-	def _count(self):
-		return self._shape[0] if self._selected is None else len(self._selected)
-
-
-	def _load_sel(self, sel=None, **kwargs):
+	class BadPathError(RemoteBuffer.NotReady):
 		pass
+
+
+	class MissingDatasetError(RemoteBuffer.NotReady):
+		pass
+
+
+	def _prepare_sel(self, sel=None, **kwargs):
+		if self.data is None:
+			if not self.path.exists():
+				raise self.BadPathError(str(self.path))
+			with hf.File(str(self.path), 'r') as f:
+				if self.key_name not in f:
+					raise self.MissingDatasetError(self.key_name)
+		super()._prepare_sel(sel=sel, **kwargs)
+
+
+	def _size(self):
+		return self._shape[0] if self._selected is None else len(self._selected)
 
 
 	def _update(self, sel=None, **kwargs):
@@ -159,85 +269,105 @@ class HDFBuffer(FixedBuffer):
 
 
 
-class LoadableHDFBuffer(TensorBuffer, HDFBuffer):
-	def _load_sel(self, sel=None, **kwargs):
-		data = super(TensorBuffer, self)._get(sel=sel, **kwargs)
-		self.set_data(data)
+# class LoadableHDFBuffer(TensorBuffer, HDFBuffer):
+# 	def _prepare_sel(self, sel=None, **kwargs):
+# 		data = super(TensorBuffer, self)._get(sel=sel, **kwargs)
+# 		self.set_data(data)
 
 
 
-class WrappedBuffer(TensorBuffer):
-	def __init__(self, source=None, sel=None, **kwargs):
-		super().__init__(**kwargs)
-		self.source, self.sel = None, None
-		self.register_children(source=source, sel=sel)
-		self.set_source(source)
+class BufferView(AbstractCountableDataView, RemoteBuffer):
 
-
-	def is_loaded(self):
-		return (self.source is not None and self.source.is_loaded()) or (self.source is None and super().is_loaded())
-
-
-	def _count(self):
-		if self.sel is None:
-			return (self.source is not None and len(self.source)) or (self.source is None and super()._count())
-		return len(self.sel)
-
-
-	def unwrap(self, **kwargs):
-		if self.is_loaded() and self.source is not None:
-			self.set_data(self._get(sel=self.sel, device=self.device, **kwargs))
-			self.sel = None
-			self.space = self.space
-			# self._loaded = self.source._loaded
-			# self.set_source()
-			return
-		raise self.NotLoadedError(self)
-
-
-	def merge(self, new_instance=None):
-		raise NotImplementedError
-
-
-	@staticmethod
-	def stack(*datasets): # TODO: append these
-		raise NotImplementedError
-
-
-	def set_source(self, source=None):
-		self.source = source
+	def _prepare_sel(self, sel=None, **kwargs):
+		sel = self._merge_sel(sel)
+		if self.source is None:
+			raise self.NoSource
+		return self.source.prepare(sel=sel, **kwargs)
 
 
 	@property
 	def space(self):
-		if self._space is None:
+		if self._space is None and self.source is not None:
 			return self.source.space
-		return self.space
+		return self._space
 	@space.setter
 	def space(self, space):
 		self._space = space
 
 
-	def _load(self, *args, **kwargs):
-		pass
+
+	# def __init__(self, source=None, sel=None, **kwargs):
+	# 	super().__init__(**kwargs)
+	# 	self.source, self.sel = None, None
+	# 	self._register_deviced_children(source=source, sel=sel)
+	# 	self.set_source(source)
+
+	# def is_ready(self):
+	# 	return (self.source is not None and self.source.is_ready()) or (self.source is None and super().is_ready())
+	#
+	#
+	# def _count(self):
+	# 	if self.sel is None:
+	# 		return (self.source is not None and len(self.source)) or (self.source is None and super()._count())
+	# 	return len(self.sel)
+	#
+	#
+	# def unwrap(self, **kwargs):
+	# 	if self.is_ready() and self.source is not None:
+	# 		self.set_data(self._get(sel=self.sel, device=self.device, **kwargs))
+	# 		self.sel = None
+	# 		self.space = self.space
+	# 		# self._loaded = self.source._loaded
+	# 		# self.set_source()
+	# 		return
+	# 	raise self.NotLoadedError(self)
+	#
+	#
+	# def merge(self, new_instance=None):
+	# 	raise NotImplementedError
+	#
+	#
+	# @staticmethod
+	# def stack(*datasets): # TODO: append these
+	# 	raise NotImplementedError
+	#
+	#
+	# def set_source(self, source=None):
+	# 	self.source = source
 
 
-	def _update(self, sel=None, **kwargs):
-		if self.source is None:
-			super()._update(sel=sel, **kwargs)
+	# @property
+	# def space(self):
+	# 	if self._space is None:
+	# 		return self.source.space
+	# 	return self.space
+	# @space.setter
+	# def space(self, space):
+	# 	self._space = space
+	#
+	#
+	# def _prepare(self, *args, **kwargs):
+	# 	pass
+	#
+	#
+	# def _update(self, sel=None, **kwargs):
+	# 	if self.source is None:
+	# 		super()._update(sel=sel, **kwargs)
+	#
+	#
+	# def _get(self, sel=None, device=None, **kwargs):
+	# 	if self.data is not None:
+	# 		return super()._get(sel, device=device, **kwargs)
+	# 	if self.sel is not None:
+	# 		sel = self.sel if sel is None else self.sel[sel]
+	# 	assert self.source is not None, 'missing source'
+	# 	return self.source.get(sel, device=device, **kwargs)
 
 
-	def _get(self, sel=None, device=None, **kwargs):
-		if self.data is not None:
-			return super()._get(sel, device=device, **kwargs)
-		if self.sel is not None:
-			sel = self.sel if sel is None else self.sel[sel]
-		assert self.source is not None, 'missing source'
-		return self.source.get(sel, device=device, **kwargs)
+Buffer.View = BufferView
 
 
-
-class NarrowBuffer(WrappedBuffer):
+class NarrowBuffer(BufferView):
 	def __init__(self, start=None, size=1, dim=1, **kwargs):
 		super().__init__(**kwargs)
 		self._dim = dim
@@ -245,8 +375,8 @@ class NarrowBuffer(WrappedBuffer):
 		self._size = size
 
 
-	def get(self, sel=None, device=None, **kwargs):
-		sample = super().get(sel=sel, device=device, **kwargs)
+	def _get(self, sel=None, **kwargs):
+		sample = super()._get(sel=sel, **kwargs)
 		if self._start is not None:
 			sample = sample.narrow(self._dim, self._start, self._size)
 		return sample

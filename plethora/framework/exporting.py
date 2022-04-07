@@ -2,10 +2,10 @@
 from omnibelt import Exportable as _Old_Exportable, export, load_export
 from omnibelt import exporting_common as _common
 
-from .features import Sourced
+from .features import Rooted
 
 
-class Exportable(_Old_Exportable, Sourced, create_table=True):
+class Exportable(_Old_Exportable, Rooted, create_table=True):
 	@classmethod
 	def create_export_path(cls, name, root=None, ext=None):
 		if root is None:

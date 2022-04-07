@@ -7,6 +7,29 @@ from omnibelt import unspecified_argument, agnosticmethod
 from . import util
 
 
+
+class Named:
+	def __init__(self, name=unspecified_argument, **kwargs):
+		if name is not unspecified_argument:
+			self.name = name
+
+
+	def __str__(self):
+		return self.name
+
+
+	@property
+	def name(self):
+		try:
+			return self._name
+		except AttributeError:
+			return getattr(self.__class__, 'name', self.__class__.__name__)
+	@name.setter
+	def name(self, name):
+		self._name = name
+
+
+
 class Device:
 	def __init__(self, *args, device=None, **kwargs):
 		super().__init__(*args, **kwargs)
@@ -30,10 +53,10 @@ class DeviceContainer(Device):
 	def __init__(self, children={}, **kwargs):
 		super().__init__(**kwargs)
 		self._device_children = set()
-		self.register_children(**children)
+		self._register_deviced_children(**children)
 
 
-	def register_children(self, **children):
+	def _register_deviced_children(self, **children):
 		for name, child in children.items():
 			self._device_children.add(name)
 			setattr(self, name, child)
@@ -45,7 +68,7 @@ class DeviceContainer(Device):
 			obj = getattr(self, name, None)
 			if obj is not None:
 				children[name] = obj.to(device)
-		self.register_children(**children)
+		self._register_deviced_children(**children)
 
 
 
@@ -93,33 +116,36 @@ class SharableAttrs:
 
 
 
-class Loadable(Device):
-	def __init__(self, *args, **kwargs): # TODO: add autoload using __certify__
-		super().__init__(*args, **kwargs)
-		self._loaded = False
+class Prepared: # TODO: add autoprepare using __certify__
+	_is_ready = False
+
+	@property
+	def is_ready(self):
+		return self._is_ready
 
 
-	def is_loaded(self):
-		return self._loaded
+	class NotReady(Exception):
+		pass
 
 
-	def load(self, *args, **kwargs):
-		if not self.is_loaded():
-			self._load(*args, **kwargs)
-			self._loaded = True
+	def prepare(self, *args, **kwargs):
+		if not self.is_ready:
+			self._prepare(*args, **kwargs)
+			self._is_ready = True
 		return self
 
 
-	def _load(self, *args, **kwargs):
+	def _prepare(self, *args, **kwargs):
 		raise NotImplementedError
 
 
 
-class Sourced:
+class Rooted:
 	_root = None
-	def __init__(self, root=None, **kwargs):
+	def __init__(self, root=unspecified_argument, **kwargs):
 		super().__init__(**kwargs)
-		self._root = root
+		if root is not unspecified_argument:
+			self._root = root
 
 
 	@staticmethod
@@ -132,8 +158,13 @@ class Sourced:
 
 
 	@agnosticmethod
-	def get_root(self):
+	def get_root(self): # for easier inheritance
 		return self._infer_root(self._root)
+
+
+	@property
+	def root(self):
+		return self.get_root()
 
 
 

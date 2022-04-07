@@ -3,7 +3,7 @@ from collections import OrderedDict
 import torch
 from omnibelt import unspecified_argument, duplicate_instance
 
-from .features import Device, DeviceContainer, Loadable, Seeded
+from .features import Device, DeviceContainer, Prepared, Seeded
 
 
 
@@ -13,45 +13,139 @@ class BufferTransform:
 
 
 
-class AbstractBuffer(BufferTransform, Loadable, DeviceContainer, Seeded):
-	def __init__(self, space=None, transforms=None, default_len=None, **kwargs):
-		super().__init__(**kwargs)
-		if transforms is None:
-			transforms = []
-		self.space = space
-		self.transforms = transforms
-		self._waiting_update = None
-		self._default_len = default_len
-
+class AbstractData(Prepared): # application of Prepared
+	'''Includes mostly buffers and datasets, as well as batches and views (all of which uses prepare() and get())'''
 
 	def copy(self):
 		return duplicate_instance(self) # shallow copy
+	# TODO: deepcopy
 
 
-	@property
-	def space(self):
-		return self._space
-	@space.setter
-	def space(self, space):
-		self._space = space
-
-
-	def _update(self, **kwargs):
+	def _update(self, sel=None, **kwargs):
 		raise NotImplementedError
 
 
-	def update(self, **kwargs):
-		if self.is_loaded():
-			return self._update(**kwargs)
-		self._waiting_update = self._store_update(**kwargs)
+	def update(self, sel=None, **kwargs):
+		if not self.is_ready:
+			raise self.NotReady
+		return self._update(sel=sel, **kwargs)
 
 
-	def _load(self, *args, **kwargs):
+	def get(self, sel=None, **kwargs):
+		try:
+			return self._get(sel=sel, **kwargs)
+		except self.NotReady:
+			self.prepare()
+			return self._get(sel=sel, **kwargs)
+
+
+	def _get(self, sel=None, **kwargs):
+		raise NotImplementedError
+
+
+	class NoView(Exception):
 		pass
 
 
-	def load(self, *args, **kwargs):
-		out = super().load(*args, **kwargs)
+	View = None
+	def create_view(self, **kwargs):
+		if self.View is None:
+			raise self.NoView
+		return self.View(source=self, **kwargs)
+
+
+
+class AbstractView(AbstractData):
+	_is_ready = True
+
+	def __init__(self, source=None, sel=None, **kwargs):
+		super().__init__(**kwargs)
+		self.source = source
+		self.sel = sel
+
+
+	View = None
+	def create_view(self, **kwargs):
+		if self.View is None:
+			if self.source is None:
+				raise self.NoSource
+			return self.source.create_view(**kwargs)
+		return super().create_view(**kwargs)
+
+
+	def _merge_sel(self, sel=None):
+		if self.sel is not None:
+			sel = self.sel if sel is None else self.sel[sel]
+		return sel
+
+
+	@property
+	def source(self):
+		# if self._source is None:
+		# 	raise self.NoSource
+		return self._source
+	@source.setter
+	def source(self, source):
+		if not self._check_source(source):
+			raise self.InvalidSource(source)
+		self._source = source
+
+
+	def _check_source(self, source):
+		return True
+
+
+	class InvalidSource(Exception):
+		def __init__(self, source):
+			super().__init__(repr(source))
+			self.source = source
+
+
+	class NoSource(AbstractData.NotReady):
+		pass
+
+
+	@property
+	def is_ready(self):
+		return self.source is not None and self.source.is_ready
+
+
+	def _prepare(self, *args, **kwargs):
+		if self.source is None:
+			raise self.NoSource
+		return self.source.prepare(*args, **kwargs)
+
+
+	def _update(self, sel=None, **kwargs):
+		if self.source is None:
+			raise self.NoSource
+		sel = self._merge_sel(sel)
+		return super()._update(sel=sel, **kwargs)
+
+
+	def _get(self, sel=None, **kwargs):
+		if self.source is None:
+			raise self.NoSource
+		sel = self._merge_sel(sel)
+		return self.source.get(sel=sel, **kwargs)
+
+
+
+class StorableUpdate(AbstractData):
+	def __init__(self, *args, **kwargs):
+		super().__init__(*args, **kwargs)
+		self._waiting_update = None
+
+
+	def update(self, **kwargs):
+		try:
+			return super().update(**kwargs)
+		except self.NotReady:
+			self._waiting_update = self._store_update(**kwargs)
+
+
+	def prepare(self, *args, **kwargs):
+		out = super().prepare(*args, **kwargs)
 		if self._waiting_update is not None:
 			self._apply_update(self._waiting_update)
 			self._waiting_update = None
@@ -66,26 +160,19 @@ class AbstractBuffer(BufferTransform, Loadable, DeviceContainer, Seeded):
 		return self.update(**update)
 
 
-	def transform(self, sample=None):
-		for transform in self.transforms:
-			sample = transform(sample)
-		return sample
+
+class AbstractBuffer(BufferTransform, StorableUpdate, AbstractData):
+	def __init__(self, space=None, **kwargs):
+		super().__init__(**kwargs)
+		self.space = space
 
 
-	def _get(self, sel=None, device=None, **kwargs):
-		raise NotImplementedError
-
-
-	class NotLoadedError(Exception):
-		def __init__(self, buffer):
-			super().__init__(f'{buffer}')
-
-
-	def get(self, sel=None, device=None, **kwargs):
-		if not self.is_loaded():
-			raise NotLoadedError(self)
-		sample = self._get(sel=sel, device=device, **kwargs)
-		return self.transform(sample)
+	@property
+	def space(self):
+		return self._space
+	@space.setter
+	def space(self, space):
+		self._space = space
 
 
 
@@ -117,17 +204,19 @@ class Container(Device, OrderedDict):
 				self[key] = val.to(device)
 
 
-	def _package(self, data):
-		return data
+	# def _package(self, data):
+	# 	return data
 
 
-	def get(self, key, default=None):
-		try:
-			val = self[key]
-		except KeyError:
-			return default
-		return self._package(val)
+	# def get(self, key, default=None):
+	# 	try:
+	# 		val = self[key]
+	# 	except KeyError:
+	# 		return default
+	# 	return self._package(val)
 
+	class _missing: # flag for missing items
+		pass
 
 	def __getitem__(self, item):
 		if item not in self:

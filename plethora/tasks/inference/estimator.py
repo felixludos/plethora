@@ -391,10 +391,6 @@ class MultiEstimator(ParallelModel): # all estimators must be of the same kind (
 
 
 class Periodized(MultiEstimator, Regressor): # create a copy of the estimator for the sin component
-	def __init__(self, A, cutoff=unspecified_argument, **kwargs):
-		super().__init__(A, cutoff=cutoff, **kwargs)
-
-
 	def _process_inputs(self, key, *ins):
 		if 'fit' in key:
 			infos = [ScikitEstimatorInfo(est, ins[0]) for est in self.estimators]

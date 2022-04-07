@@ -60,7 +60,7 @@ class SwissRollDataset(SyntheticDataset):
 		return pts
 
 
-	def _load(self, *args, **kwargs):
+	def _prepare(self, *args, **kwargs):
 		lbls = self.generate_mechanism(len(self))
 
 		self.buffers['label'].set_data(lbls)
@@ -68,7 +68,7 @@ class SwissRollDataset(SyntheticDataset):
 			self.buffers['target'].set_data(lbls.narrow(-1,0,1))
 		self.buffers['observation'].set_data(self.generate_observation_from_mechanism(lbls))
 
-		super()._load(*args, **kwargs)
+		super()._prepare(*args, **kwargs)
 
 
 
@@ -121,7 +121,7 @@ class HelixDataset(SyntheticDataset):
 		return pts + self._generate_noise(len(theta), seed=seed, gen=gen)
 
 
-	def _load(self, *args, **kwargs):
+	def _prepare(self, *args, **kwargs):
 		lbls = self.generate_mechanism(len(self))
 
 		self.buffers['label'].set_data(lbls)
@@ -129,7 +129,7 @@ class HelixDataset(SyntheticDataset):
 			self.buffers['target'].set_data(lbls.narrow(-1, 0, 1))
 		self.buffers['observation'].set_data(self.generate_observation_from_mechanism(lbls))
 
-		super()._load(*args, **kwargs)
+		super()._prepare(*args, **kwargs)
 
 
 

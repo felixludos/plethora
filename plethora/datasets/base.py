@@ -4,21 +4,21 @@ from pathlib import Path
 import math
 from collections import OrderedDict
 import torch
-from omnibelt import unspecified_argument, duplicate_instance, md5
+from omnibelt import unspecified_argument, duplicate_instance, md5, agnosticmethod
 import h5py as hf
 
-from ..framework import base, Sourced
-from .buffers import FixedBuffer, TensorBuffer, WrappedBuffer, HDFBuffer
+from ..framework import base, Rooted, Named
+from .buffers import AbstractFixedBuffer, Buffer, BufferView, SelectiveBufferView, \
+	HDFBuffer, AbstractCountableData, AbstractCountableDataView
 
 
 
-
-class Iterable:
+class Batchable(base.AbstractData):
 	def get_iterator(self, infinite=False, **kwargs):
 		first = True
 		while first or infinite:
 			for sel in self.generate_selections(**kwargs):
-				yield self._create_batch(sel=sel)
+				yield self.create_batch(sel=sel)
 			first = False
 
 
@@ -38,12 +38,14 @@ class Iterable:
 		raise NotImplementedError
 
 
-	def _create_batch(self, sel=None, **kwargs):
-		raise NotImplementedError
+	Batch = None
+	def create_batch(self, sel=None, **kwargs):
+		return self.Batch(source=self, sel=sel, **kwargs)
 	
 
 
-class Batchable(Iterable, base.Seeded):
+class Epoched(AbstractCountableData, Batchable, base.Seeded):
+	'''Batchable with a fixed total number of samples (implements __len__)'''
 	def __init__(self, batch_size=64, shuffle_batches=True, force_batch_size=True,
 	             batch_device=None, infinite=False, **kwargs):
 		super().__init__(**kwargs)
@@ -90,7 +92,7 @@ class Batchable(Iterable, base.Seeded):
 			gen = self.gen
 			
 		if sel is None:
-			sel = torch.arange(len(self))
+			sel = torch.arange(self.size())
 		if shuffle:
 			sel = sel[self.shuffle_indices(len(sel), gen=gen)]
 		order = sel
@@ -115,7 +117,7 @@ class Batchable(Iterable, base.Seeded):
 			
 		subsel = sel
 
-		N = len(self) if subsel is None else len(subsel)
+		N = self.size() if subsel is None else len(subsel)
 		samples_per_epoch = N - int(force_batch_size) * (N % batch_size)
 		batches_per_epoch = int(math.ceil(samples_per_epoch / batch_size))
 		if infinite is None:
@@ -146,7 +148,7 @@ class Batchable(Iterable, base.Seeded):
 						break
 				if pbar is not None:
 					pbar.update(N)
-				yield self._create_batch(sel=sel)
+				yield self.create_batch(sel=sel)
 				if total_samples is not None and total_samples <= 0:
 					break
 		if pbar is not None:
@@ -154,212 +156,42 @@ class Batchable(Iterable, base.Seeded):
 
 
 
-class Batch(Batchable, base.Container):
-	def __init__(self, source, sel=None, buffers={}, **kwargs):
-		super().__init__(**kwargs)
-		self.source = source
-		self.replacement_buffers = buffers.copy()
-		self.sel = sel
+class DataSource(Batchable, base.AbstractData, Named):
+
+	class MissingBuffer(Exception):
+		pass
+
+
+	def available_buffers(self): # returns list of names
+		raise NotImplementedError
+
+
+	def iter_buffers(self): # iterates through buffers
+		raise NotImplementedError
+
+
+	def register_buffer(self, name, **kwargs):
+		raise NotImplementedError
 
 
 	def get_buffer(self, name):
-		if name in self.replacement_buffers:
-			return self.replacement_buffers[name]
-		return self.source.get_buffer(name)
-
-	
-	def get_iterator(self, *, sel=None, **kwargs):
-		if sel is None:
-			sel = self.sel
-		return super().get_iterator(sel=sel, **kwargs)
-
-
-	def generate_selections(self, *, sel=None, **kwargs):
-		if sel is None:
-			sel = self.sel
-		return super().generate_selections(sel=sel, **kwargs)
-
-
-	def get_available(self):
-		return list(self.source.buffers.keys())
-
-
-	@property
-	def space_of(self, name):
-		return self.source.space_of(name)
-
-	
-	def is_cached(self, item):
-		return super().__contains__(item)
-	
-	
-	def __contains__(self, item):
-		return super().__contains__(item) or (self.source is not None and item in self.source.buffers)
-
-
-	def get(self, key, default=None, sel=None, **kwargs):
-		if sel is None:
-			sel = self.sel
-		elif self.sel is not None:
-			sel = self.sel[sel]
-		if key in self.replacement_buffers:
-			if self.replacement_buffers[key] is not None:
-				return self.replacement_buffers[key].get(sel=self.sel)
-		elif key in self.source:
-			return self.source.get(key, sel=self.sel)
-		return default
-
-
-	def _find_missing(self, key, **kwargs):
-		if self.device is not None:
-			val = val.to(self.device)
-		self[key] = val # cache the results
-		return val
-
-
-	@property
-	def size(self):
-		return len(self.sel)
-
-
-	def _create_batch(self, batch_type=None, **kwargs):
-		if batch_type is None:
-			batch_type = self.__class__
-		return batch_type(self.source, **kwargs)
-
-
-	def __str__(self):
-		entries = list(self.keys())
-		for available in self.get_available():
-			if available not in entries:
-				entries.append('{' + available + '}')
-		entries = ', '.join(entries)
-		return f'{self.__class__.__name__}[{self.size}]({entries})'
-
-
-
-class DataCollection(Iterable, base.AbstractBuffer):
-	name = None
-	
-	def __init__(self, *, name=None, mode=None,
-	             buffers=None, modes=None, space=None, **kwargs):
-		super().__init__(space=None, **kwargs)
-		if self.name is None or name is not None:
-			self.name = name
-
-		# if batch_device is unspecified_argument:
-		# 	batch_device = None
-		# self.batch_device = batch_device
-
-		if buffers is None:
-			buffers = OrderedDict()
-		self.buffers = buffers
-
-		self._mode = mode
-		if modes is None:
-			modes = {}
-			if mode is not None:
-				modes[mode] = self
-		self._modes = modes
-
-
-	class BufferNotFoundError(Exception):
-		def __init__(self, *missing):
-			super().__init__(', '.join(missing))
-			self.missing = missing
-
-
-	def get_name(self):
-		return self.__class__.__name__ if self.name is None else self.name
-
-
-	def __str__(self):
-		# return self.get_name()
-		name = '' #if self.name is None else '{' + self.name + '}'
-		return f'{self.__class__.__name__}{name}<{self.mode}>'
-
-
-	def __repr__(self):
-		return str(self)
-		# name = '' if self.name is None else self.name
-		# return f'{self.__class__.__name__}({name})'
-
-
-	def copy(self):
-		new = super().copy()
-		new.buffers = new.buffers.copy()
-		new._modes = new._modes.copy()
-		return new
-
-
-	_default_buffer_type = None
-	@classmethod
-	def _default_buffer_factory(cls, name, buffer_type=None, **kwargs):
-		if buffer_type is None:
-			buffer_type = cls._default_buffer_type
-		return buffer_type(name, **kwargs)
-
-
-	def register_buffer(self, name, buffer=None, space=unspecified_argument, buffer_type=None, **kwargs):
-		if not isinstance(buffer, base.AbstractBuffer):
-			if buffer_type is None and type(buffer) == type and issubclass(buffer, base.AbstractBuffer):
-				buffer_type = buffer
-			if isinstance(buffer, torch.Tensor):
-				kwargs['data'] = buffer
-			buffer = self._default_buffer_factory(name, buffer_type=buffer_type, **kwargs)
-		if space is not unspecified_argument:
-			buffer.space = space
-		self.buffers[name] = buffer
-		return self.buffers[name]
-
-
-	def _remove_buffer(self, name):
-		if self.has_buffer(name):
-			del self.buffers[name]
-
-
-	def rename_buffer(self, current, new=None):
-		buffer = self.get_buffer(current)
-		if buffer is not None:
-			self._remove_buffer(current)
-		if new is not None:
-			self.register_buffer(new, buffer)
-
-
-	def space_of(self, name):
-		if name not in self.buffers:
-			raise self.BufferNotFoundError(name)
-		return self.buffers[name].space
-
-
-	def _load(self, *args, **kwargs):
-		for name, buffer in self.buffers.items():
-			buffer.load()
-
-
-	def _check_buffer_names(self, *names):
-		missing = []
-		for name in names:
-			if name not in self.buffers:
-				missing.append(name)
-		if len(missing):
-			raise self.BufferNotFoundError(*missing)
-
-
-	def get_buffer(self, name):
-		return self.buffers.get(name)
+		raise NotImplementedError
 
 
 	def has_buffer(self, name):
-		return name in self.buffers
+		raise NotImplementedError
+
+
+	def __getitem__(self, name):
+		return self.get(name)
 
 
 	def __contains__(self, item):
 		return self.has_buffer(item)
 
 
-	# def _package_sample(self, sample, name, sel, **kwargs):
-	# 	return sample
+	def space_of(self, name):
+		return self.get_buffer(name).space
 
 
 	def get(self, name, sel=None, **kwargs):
@@ -367,10 +199,68 @@ class DataCollection(Iterable, base.AbstractBuffer):
 
 
 	def _get(self, name, sel=None, **kwargs):
-		self._check_buffer_names(name)
-		sample = self.buffers[name].get(sel)
-		return sample
-		# return self._package_sample(sample, name, sel, **kwargs)
+		return self.get_buffer(name).get(sel)
+
+
+	def _prepare(self, *args, **kwargs):
+		for buffer in self.iter_buffers():
+			buffer.prepare()
+
+
+
+class SourceView(DataSource, base.AbstractView):
+	# _is_ready = True
+
+	def __str__(self):
+		src = '' if self.source is None else str(src)
+		src = '{' + src + '}'
+		return f'{super().__str__()}{src}'
+
+
+	Batch = None
+	def create_batch(self, sel=None, **kwargs):
+		if self.Batch is None:
+			if self.source is None:
+				raise self.NoSource
+			return self.source.create_batch(**kwargs)
+		return super().create_batch(**kwargs)
+
+
+	def available_buffers(self): # returns list of names
+		if self.source is None:
+			raise self.NoSource
+		return self.source.available_buffers()
+
+
+	def get_buffer(self, name):
+		if self.source is None:
+			raise self.NoSource
+		return self.source.get_buffer(name)
+
+
+	def has_buffer(self, name):
+		if self.source is None:
+			raise self.NoSource
+		return self.source.has_buffer(name)
+
+
+
+
+
+
+class MultiModed(DataSource):
+	def __init__(self, *, mode=None, modes=None, **kwargs):
+		super().__init__(**kwargs)
+		if modes is None:
+			modes = OrderedDict()
+		self._modes = modes
+		self._mode = mode
+
+
+	def copy(self):
+		new = super().copy()
+		new._modes = new._modes.copy()
+		return new
 
 
 	def register_modes(self, **modes):
@@ -396,8 +286,186 @@ class DataCollection(Iterable, base.AbstractBuffer):
 		raise self.MissingModeError
 
 
+
+class BufferTable(DataSource):
+	def __init__(self, buffers=None, **kwargs):
+		super().__init__(**kwargs)
+		if buffers is None:
+			buffers = OrderedDict()
+		self.buffers = buffers
+
+
+	def available_buffers(self): # returns list of names
+		return list(self.buffers.keys())
+
+
+	def iter_buffers(self): # iterates through buffers
+		return self.buffers.values()
+
+
+	def get_buffer(self, name):
+		if name not in self.buffers:
+			raise self.MissingBuffer(name)
+		return self.buffers[name]
+
+
+	def has_buffer(self, name):
+		return name in self.buffers
+
+
+	def copy(self):
+		new = super().copy()
+		new.buffers = new.buffers.copy()
+		return new
+
+
+	class InvalidBuffer(Exception):
+		def __init__(self, name, buffer):
+			super().__init__(f'{name}: {buffer}')
+			self.name, self.buffer = name, buffer
+
+
+	Buffer = Buffer
+	@classmethod
+	def _create_buffer(cls, **kwargs):
+		return cls.Buffer(**kwargs)
+
+
+	def register_buffer(self, name, buffer=None, space=unspecified_argument, **kwargs):
+		if issubclass(buffer, base.AbstractBuffer):
+			if space is not unspecified_argument:
+				kwargs['space'] = space
+			buffer = buffer(**kwargs)
+		elif isinstance(buffer, torch.Tensor):
+			kwargs['data'] = buffer
+			if space is not unspecified_argument:
+				kwargs['space'] = space
+			buffer = self._create_buffer(**kwargs)
+		if space is not unspecified_argument:
+			buffer.space = space
+		if not self._check_buffer(name, buffer):
+			raise InvalidBuffer(name, buffer)
+		self.buffers[name] = buffer
+		return self.buffers[name]
+
+
+	def _check_buffer(self, name, buffer): # during registration
+		return True
+
+
+	def _remove_buffer(self, name):
+		if name in self.buffers:
+			del self.buffers[name]
+
+
+	def rename_buffer(self, current, new=None):
+		buffer = self.get_buffer(current)
+		if buffer is not None:
+			self._remove_buffer(current)
+		if new is not None:
+			self.register_buffer(new, buffer)
+
+
+
+class ReplacementView(BufferTable, SourceView):
+	def available_buffers(self):
+		buffers = super().available_buffers()
+		for replacement in super(BufferTable, self).available_buffers():
+			if replacement not in buffers:
+				buffers.append(replacement)
+		return buffers
+
+
+	def get_buffer(self, name):
+		if name in self.buffers:
+			return super().get_buffer(name)
+		return super(BufferTable, self).get_buffer(name)
+
+
+	def has_buffer(self, name):
+		return name in self.buffers or name in super(BufferTable, self).has_buffer(name)
+
+
+
+class CountableView(AbstractCountableDataView, Epoched, SourceView):
+	def get_iterator(self, *, sel=None, **kwargs):
+		sel = self._merge_sel(sel)
+		return super().get_iterator(sel=sel, **kwargs)
+
+	def generate_selections(self, *, sel=None, **kwargs):
+		sel = self._merge_sel(sel)
+		return super().generate_selections(sel=sel, **kwargs)
+
+
+
+class CachedView(SourceView, base.Container):
+	def is_cached(self, item):
+		return super(DataSource, self).__contains__(item)
+
+
+	def __contains__(self, item):
+		return self.is_cached(item) or (self.source is not None and item in self.source)
+
+
+	def __getitem__(self, name):
+		return super(DataSource, self).__getitem__(name)
+
+
+	def __len__(self):
+		return super(AbstractCountableData, self).__len__(item)
+
+
+	def update(self, other): # TODO: maybe add a warning that dict.update is used
+		return super(base.AbstractData, self).update(other)
+
+
+	def get(self, name, default=None, sel=None, **kwargs):
+		if self.is_cached(name):
+			return super(base.AbstractData).get(name, default)
+		elif name in self:
+			val = super().get(name, sel=sel, **kwargs)
+			if self.device is not None:
+				val = val.to(self.device)
+			self[name] = val
+			return self[name]
+		return default
+
+
+	def _find_missing(self, key, **kwargs):
+		val = self.get(key, default=self._missing, **kwargs)
+		if val is self._missing:
+			return super()._find_missing(key)
+		return val
+
+
+Batchable.Batch = CachedView
+
+
+class Batch(CountableView, CachedView):
+	pass
+
+
+
+class DataCollection(MultiModed, BufferTable, DataSource):
+
+	def __str__(self):
+		mode = self.mode
+		if mode is None:
+			mode = ''
+		return f'{super().__str__()}<{mode}>'
+
+
+	def __repr__(self):
+		return str(self)
+
+
+	def _update(self, sel=None, **kwargs):
+		for buffer in self.iter_buffers():
+			buffer.update(sel=sel, **kwargs)
+
+
 	
-class Dataset(DataCollection, Batchable, FixedBuffer):
+class Dataset(DataCollection, Epoched, AbstractCountableData):
 	def __init__(self, **kwargs):
 		super().__init__(**kwargs)
 		self._subset_src = None
@@ -405,18 +473,11 @@ class Dataset(DataCollection, Batchable, FixedBuffer):
 		self._subset_indices = None
 
 
+	View = CountableView
+
+
 	def __str__(self):
-		return f'{self.__class__.__name__}<{self.mode}>[{len(self)}]'
-
-
-	_default_buffer_type = TensorBuffer
-
-
-	_default_batch_type = Batch
-	def _create_batch(self, batch_type=None, **kwargs):
-		if batch_type is None:
-			batch_type = self._default_batch_type
-		return batch_type(self, **kwargs)
+		return f'{super().__str__()}[{self.size()}]'
 
 
 	@staticmethod
@@ -434,12 +495,9 @@ class Dataset(DataCollection, Batchable, FixedBuffer):
 		return part1, part2
 
 
-	_default_wrapper_type = WrappedBuffer
-	@classmethod
-	def _wrap_buffer(cls, source, sel=None, wrapper_type=None, **kwargs):
-		if wrapper_type is None:
-			wrapper_type = cls._default_wrapper_type
-		return wrapper_type(source, sel=sel, **kwargs)
+	@staticmethod
+	def _create_buffer_view(buffer, sel=None, **kwargs):
+		return buffer.create_view(sel=sel, **kwargs)
 
 
 	@property
@@ -455,21 +513,21 @@ class Dataset(DataCollection, Batchable, FixedBuffer):
 
 	def subset(self, cut=None, indices=None, shuffle=False, src_ref=True):
 		if indices is None:
-			indices, _ = self._split_indices(indices=self.shuffle_indices(len(self), gen=self.gen)
-										  if shuffle else torch.arange(len(self)), cut=cut)
+			indices, _ = self._split_indices(indices=self.shuffle_indices(self.size(), gen=self.gen)
+										  if shuffle else torch.arange(self.size()), cut=cut)
 		new = self.copy()
 		if src_ref:
 			new._subset_src = self
 		new._default_len = len(indices)
 		for name, buffer in self.buffers.items():
-			new.register_buffer(name, self._wrap_buffer(buffer, sel=indices))
+			new.register_buffer(name, self._create_buffer_view(buffer, sel=indices))
 		if self.mode is not None:
 			self.register_modes(**{self.mode: new})
 		return new
 
 
-	def _count(self):
-		return len(next(iter(self.buffers.values())))
+	def _size(self):
+		return next(iter(self.buffers.values())).size()
 	
 	
 	def split(self, splits, shuffle=False, register_modes=False):
@@ -484,7 +542,7 @@ class Dataset(DataCollection, Batchable, FixedBuffer):
 		names, cuts = zip(*sorted(named_cuts, key=lambda nr: (isinstance(nr[1], int), isinstance(nr[1], float),
 		                                                          nr[1] is None, nr[0]), reverse=True))
 
-		remaining = len(self)
+		remaining = self.size()
 		nums = []
 		itr = iter(cuts)
 		for cut in itr:
@@ -511,7 +569,7 @@ class Dataset(DataCollection, Batchable, FixedBuffer):
 		if remaining > 0:
 			nums[-1] += remaining
 
-		indices = self.shuffle_indices(len(self), gen=self.gen) if shuffle else torch.arange(len(self))
+		indices = self.shuffle_indices(self.size(), gen=self.gen) if shuffle else torch.arange(self.size())
 
 		plan = dict(zip(names, nums))
 		parts = {}
@@ -544,13 +602,13 @@ class ObservationDataset(Dataset):
 		return self.get('observation', sel=sel, **kwargs)
 
 
-	def _load(self, *args, **kwargs):
-		super()._load()
+	def _prepare(self, *args, **kwargs):
+		super()._prepare()
 		if not self.has_buffer('observation'):
 			# TODO: warning: guessing observation buffer
 			assert len(self.buffers), 'cant find a buffer for the observations (did you forget to register it?)'
 			key = list(self.buffers.keys())[-1]
-			self.register_buffer('observation', self._wrap_buffer(self.get_buffer(key)))
+			self.register_buffer('observation', self.get_buffer(key))
 
 
 	# def __len__(self):
@@ -573,12 +631,12 @@ class SupervisedDataset(ObservationDataset):
 		return self.get('target', sel=sel, **kwargs)
 
 
-	def _load(self, *args, **kwargs):
-		super()._load()
+	def _prepare(self, *args, **kwargs):
+		super()._prepare()
 		if not self.has_buffer('target'):
 			# TODO: warning: guessing target buffer
 			key = list(self.buffers.keys())[0 if len(self.buffers) < 2 else -2]
-			self.register_buffer('target', self._wrap_buffer(self.get_buffer(key)))
+			self.register_buffer('target', self.get_buffer(key))
 
 
 
@@ -592,14 +650,14 @@ class LabeledDataset(SupervisedDataset):
 		return self.get('label', sel=sel, **kwargs)
 
 
-	def _load(self, *args, **kwargs):
+	def _prepare(self, *args, **kwargs):
 		if not self.has_buffer('target') and self.has_buffer('label'):
-			self.register_buffer('target', self._wrap_buffer(self.get_buffer('label')))
-		super()._load()
+			self.register_buffer('target', self.get_buffer('label'))
+		super()._prepare()
 		if not self.has_buffer('label'):
 			# TODO: warning: guessing target buffer
 			key = list(self.buffers.keys())[0 if len(self.buffers) < 3 else -3]
-			self.register_buffer('label', self._wrap_buffer(self.get_buffer(key)))
+			self.register_buffer('label', self.get_buffer(key))
 
 
 	def generate_label(self, N, seed=None, gen=None):
@@ -630,15 +688,15 @@ class SyntheticDataset(LabeledDataset):
 		return self.space_of('mechanism') if self._distinct_mechanisms else self.label_space
 
 
-	def _load(self, *args, **kwargs):
+	def _prepare(self, *args, **kwargs):
 		if not self._distinct_mechanisms and not self.has_buffer('label') and self.has_buffer('mechanism'):
-			self.register_buffer('label', self._wrap_buffer(self.get_buffer('mechanism')))
-		super()._load()
+			self.register_buffer('label', self.get_buffer('mechanism'))
+		super()._prepare()
 		if not self.has_buffer('mechanism'):
 			# TODO: warning: guessing target buffer
 			key = list(self.buffers.keys())[0 if len(self.buffers) < 4 else -4] \
 				if self._distinct_mechanisms else 'label'
-			self.register_buffer('mechanism', self._wrap_buffer(self.get_buffer(key)))
+			self.register_buffer('mechanism', self.get_buffer(key))
 
 
 	def transform_to_mechanisms(self, data):
@@ -685,7 +743,7 @@ class SyntheticDataset(LabeledDataset):
 
 
 
-class SourcedDataset(DataCollection, Sourced):
+class RootedDataset(DataCollection, Rooted):
 	@classmethod
 	def _infer_root(cls, root=None):
 		return super()._infer_root(root=root) / 'datasets'
@@ -743,7 +801,7 @@ class SourcedDataset(DataCollection, Sourced):
 
 
 
-class EncodableDataset(ObservationDataset, SourcedDataset):
+class EncodableDataset(ObservationDataset, RootedDataset):
 	def __init__(self, encoder=None, replace_observation_key=None, encoded_key='encoded',
 	             encoded_file_name='aux', encode_on_load=False, save_encoded=False, encode_pbar=None, **kwargs):
 		super().__init__(**kwargs)
@@ -817,8 +875,8 @@ class EncodableDataset(ObservationDataset, SourcedDataset):
 		cls.create_hdf_dataset(path, ident, data=data, meta=info)
 		
 	
-	def _load(self, *args, **kwargs):
-		super()._load(*args, **kwargs)
+	def _prepare(self, *args, **kwargs):
+		super()._prepare(*args, **kwargs)
 		
 		if self._replace_observation_key is not None:
 			self._encoded_observation_key = 'observation'
@@ -829,11 +887,10 @@ class EncodableDataset(ObservationDataset, SourcedDataset):
 		                                        data=self.load_encoded_data()))
 	
 	
-	class EncodedBuffer(WrappedBuffer):
+	class EncodedBuffer(BufferView):
 		def __init__(self, encoder=None, **kwargs):
 			super().__init__(**kwargs)
 			self.encoder = encoder
-			self.set_encoder(encoder)
 			
 
 		@property
@@ -854,7 +911,7 @@ class EncodableDataset(ObservationDataset, SourcedDataset):
 
 
 
-class ImageDataset(ObservationDataset, SourcedDataset):
+class ImageDataset(ObservationDataset, RootedDataset):
 	# def __init__(self, **kwargs):
 	# 	pass
 
@@ -868,6 +925,10 @@ class ImageDataset(ObservationDataset, SourcedDataset):
 	#
 	#
 	# 	pass
+
+
+
+
 
 
 

@@ -4,14 +4,14 @@ import torch
 from torch.nn import functional as F
 import torchvision
 
-from .base import Dataset, SupervisedDataset, TensorBuffer, ImageDataset
+from .base import Dataset, SupervisedDataset, Buffer, ImageDataset
 from ..framework.base import AbstractBuffer, FixedBuffer
 from ..framework.util import spaces
-from ..framework import Sourced
+from ..framework import Rooted
 
 
 
-class ImageBuffer(TensorBuffer):
+class ImageBuffer(Buffer):
 	def _get(self, *args, **kwargs):
 		out = super()._get(*args, **kwargs)
 		if not self.space.as_bytes:
@@ -55,7 +55,7 @@ class Torchvision_Toy_Dataset(SupervisedDataset, ImageDataset):
 		return kwargs
 
 
-	def _load(self, *args, **kwargs):
+	def _prepare(self, *args, **kwargs):
 		src_kwargs = self._get_source_kwargs()
 		src = self._source_type(**src_kwargs)
 
@@ -75,7 +75,7 @@ class Torchvision_Toy_Dataset(SupervisedDataset, ImageDataset):
 			targets = torch.as_tensor(targets)
 		self.buffers['target'].set_data(targets)
 
-		super()._load(*args, **kwargs)
+		super()._prepare(*args, **kwargs)
 
 
 
