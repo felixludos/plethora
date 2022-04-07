@@ -2,6 +2,7 @@
 
 import torch
 from omnibelt import agnosticmethod, mix_into
+from .features import Seeded
 from .base import Function, Container
 
 

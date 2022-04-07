@@ -8,8 +8,7 @@ from omnibelt import unspecified_argument, duplicate_instance, md5, agnosticmeth
 import h5py as hf
 
 from ..framework import base, Rooted, Named
-from .buffers import AbstractFixedBuffer, Buffer, BufferView, SelectiveBufferView, \
-	HDFBuffer, AbstractCountableData, AbstractCountableDataView
+from .buffers import AbstractFixedBuffer, Buffer, BufferView, HDFBuffer, AbstractCountableData, AbstractCountableDataView
 
 
 
@@ -332,15 +331,17 @@ class BufferTable(DataSource):
 
 
 	def register_buffer(self, name, buffer=None, space=unspecified_argument, **kwargs):
-		if issubclass(buffer, base.AbstractBuffer):
-			if space is not unspecified_argument:
-				kwargs['space'] = space
-			buffer = buffer(**kwargs)
-		elif isinstance(buffer, torch.Tensor):
-			kwargs['data'] = buffer
-			if space is not unspecified_argument:
-				kwargs['space'] = space
-			buffer = self._create_buffer(**kwargs)
+		if not isinstance(buffer, base.AbstractBuffer):
+		# elif buffer is None or isinstance(buffer, torch.Tensor):
+			if type(buffer) == type and issubclass(buffer, base.AbstractBuffer):
+				if space is not unspecified_argument:
+					kwargs['space'] = space
+				buffer = buffer(**kwargs)
+			else:
+				kwargs['data'] = buffer
+				if space is not unspecified_argument:
+					kwargs['space'] = space
+				buffer = self._create_buffer(**kwargs)
 		if space is not unspecified_argument:
 			buffer.space = space
 		if not self._check_buffer(name, buffer):
@@ -438,7 +439,9 @@ class CachedView(SourceView, base.Container):
 		return val
 
 
+
 Batchable.Batch = CachedView
+
 
 
 class Batch(CountableView, CachedView):
@@ -474,6 +477,7 @@ class Dataset(DataCollection, Epoched, AbstractCountableData):
 
 
 	View = CountableView
+	Batch = Batch
 
 
 	def __str__(self):
@@ -584,6 +588,17 @@ class Dataset(DataCollection, Epoched, AbstractCountableData):
 		if auto_name:
 			return [parts[name] for name, _ in named_cuts]
 		return parts
+
+
+
+class SimpleDataset(Dataset):
+	_is_ready = True
+
+	def __init__(self, data={}, **kwargs):
+		super().__init__(**kwargs)
+		for key, val in data.items():
+			self.register_buffer(key, val)
+
 
 
 
@@ -751,7 +766,7 @@ class RootedDataset(DataCollection, Rooted):
 
 	def get_root(self, dataset_dir=None):
 		if dataset_dir is None:
-			dataset_dir = self.get_name()
+			dataset_dir = self.name
 		root = super().get_root() / dataset_dir
 		os.makedirs(str(root), exist_ok=True)
 		return root
@@ -765,7 +780,7 @@ class RootedDataset(DataCollection, Rooted):
 	
 	def _find_path(self, dataset_name='', file_name=None, root=None):
 		if root is None:
-			root = self.get_root()
+			root = self.root
 		*other, dataset_name = dataset_name.split('.')
 		if file_name is None:
 			file_name = '.'.join(other) if len(other) else self.name
