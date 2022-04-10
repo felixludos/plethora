@@ -8,7 +8,8 @@ from omnibelt import unspecified_argument, duplicate_instance, md5, agnosticmeth
 import h5py as hf
 
 from ..framework import base, Rooted, Named
-from .buffers import AbstractFixedBuffer, Buffer, BufferView, HDFBuffer, AbstractCountableData, AbstractCountableDataView
+from .buffers import AbstractFixedBuffer, Buffer, BufferView, HDFBuffer, \
+	AbstractCountableData, AbstractCountableDataView
 
 
 
@@ -37,13 +38,19 @@ class Batchable(base.AbstractData):
 		raise NotImplementedError
 
 
+	class NoBatch(base.AbstractData.NoView):
+		pass
+
+
 	Batch = None
 	def create_batch(self, sel=None, **kwargs):
+		if self.Batch is None:
+			raise self.NoBatch
 		return self.Batch(source=self, sel=sel, **kwargs)
 	
 
 
-class Epoched(AbstractCountableData, Batchable, base.Seeded):
+class Epoched(AbstractCountableData, Batchable, base.Seeded): # TODO: check Seeded and Device integration
 	'''Batchable with a fixed total number of samples (implements __len__)'''
 	def __init__(self, batch_size=64, shuffle_batches=True, force_batch_size=True,
 	             batch_device=None, infinite=False, **kwargs):
@@ -82,7 +89,8 @@ class Epoched(AbstractCountableData, Batchable, base.Seeded):
 			if cls._is_big_number(N) else torch.randperm(N, generator=gen)
 
 
-	def generate_selections(self, sel=None, num_samples=None, batch_size=None, shuffle=False, force_batch_size=None, gen=None, **kwargs):
+	def generate_selections(self, sel=None, num_samples=None, batch_size=None, shuffle=False,
+	                        force_batch_size=None, gen=None, **kwargs):
 		if batch_size is None:
 			batch_size = self.batch_size
 		if force_batch_size is None:
@@ -137,8 +145,8 @@ class Epoched(AbstractCountableData, Batchable, base.Seeded):
 			pbar = pbar(total=total_samples)
 			
 		while total_samples is None or total_samples > 0:
-			sels = self.generate_selections(sel=subsel, num_samples=total_samples, batch_size=batch_size, shuffle=shuffle,
-			                                force_batch_size=force_batch_size, gen=gen, **kwargs)
+			sels = self.generate_selections(sel=subsel, num_samples=total_samples, batch_size=batch_size,
+			                                shuffle=shuffle, force_batch_size=force_batch_size, gen=gen, **kwargs)
 			for sel in sels:
 				N = len(sel)
 				if total_samples is not None:
@@ -244,6 +252,7 @@ class SourceView(DataSource, base.AbstractView):
 
 
 
+DataSource.View = SourceView
 
 
 

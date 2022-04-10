@@ -40,7 +40,11 @@ class DimSpec(Packable):
 	
 	def expand(self, vals):
 		return vals
-	
+
+	@property
+	def dof(self):
+		return len(self)
+
 	@property
 	def shape(self):
 		return self._shape
@@ -234,12 +238,12 @@ class PeriodicDim(BoundDim):
 		return (*self.shape, 2)
 	
 	def expand(self, vals):
-		thetas = vals.view(-1, *self.shape).sub(self.min).mul(2 * np.pi / self.period)
+		thetas = self.standardize(vals).mul(2*np.pi)
 		return torch.stack([thetas.cos(), thetas.sin()], -1)
 	
 	def compress(self, vals):
 		vals = vals.view(-1, *self.expanded_shape)
-		return torch.atan2(vals[..., 1], vals[..., 0]).div(2 * np.pi / self.period).remainder(self.period).add(self.min)
+		return self.unstandardize(torch.atan2(vals[..., 1], vals[..., 0]).div(2 * np.pi))
 	
 	def difference(self, x, y, standardize=False):
 		return angle_diff(self.standardize(x), self.standardize(y), period=1.) * (self.period ** float(not standardize))

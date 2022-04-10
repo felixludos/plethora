@@ -1,3 +1,5 @@
+import copy
+
 from omnibelt import agnosticmethod, unspecified_argument
 import torch
 from torch.utils.data.dataloader import default_collate
@@ -5,7 +7,7 @@ import numpy as np
 from sklearn import base, metrics, cluster
 from sklearn.ensemble import GradientBoostingRegressor, GradientBoostingClassifier
 
-from ...datasets.buffers import NarrowBuffer
+from ...datasets.buffers import Buffer, NarrowBuffer
 from ...datasets.base import Batch
 from ...framework.util import spaces
 from ...framework.base import Function
@@ -15,8 +17,9 @@ from ...framework.models import Model, ModelBuilder
 
 class AbstractScikitBuilder(ModelBuilder):
 
-	def create_joint(self, din, dout, estimators):
-		raise NotImplementedError
+	JointModel = JointModel
+	def create_joint(self, din, dout, estimators, **kwargs):
+		return self.JointModel(estimators, din=din, dout=dout, **kwargs)
 
 
 	def create_regressor(self, din, dout):
@@ -25,8 +28,11 @@ class AbstractScikitBuilder(ModelBuilder):
 		return self.create_sequential(din, dout)
 
 
-	def create_periodic(self, din, dout):
-		raise NotImplementedError
+	def create_periodic(self, din, dout, component_dim=None):
+		if component_dim is None:
+			component_dim = spaces.BoundDim(-1,1)
+		return Periodized([self.create_regressor(din=din, dout=component_dim),
+		                   self.create_regressor(din=din, dout=component_dim)])
 
 
 	def create_sequential(self, din, dout):
@@ -71,26 +77,14 @@ class AbstractScikitBuilder(ModelBuilder):
 
 
 class AbstractScikitModel(Model, Function):
-	@staticmethod
-	def _format_scikit_arg(data):
-		if data is not None and isinstance(data, torch.Tensor):
-			data = data.cpu().numpy()
-		return data
-
-
-	@staticmethod
-	def _format_scikit_output(out):
-		if out is not None and isinstance(out, np.ndarray):
-			out = torch.from_numpy(out)
-		return out
-
-
-
-class ScikitModel(AbstractScikitModel):
-	class ResultsContainer(AbstractScikitModel.ResultsContainer):
+	class ResultsContainer(Model.ResultsContainer):
 		def __init__(self, estimator=None, **kwargs):
 			super().__init__(**kwargs)
 			self.estimator = estimator
+
+
+		class UnknownResultError(KeyError):
+			pass
 
 
 		def get_result(self, key, **kwargs):
@@ -98,7 +92,7 @@ class ScikitModel(AbstractScikitModel):
 			if key not in self:
 				if self.estimator is None or key not in self.estimator.prediction_methods():
 					raise self.UnknownResultError(key)
-				self[key] = self._infer_missing(key, **kwargs)
+				self[key] = self._infer(key, **kwargs)
 			return self[key]
 
 
@@ -115,48 +109,95 @@ class ScikitModel(AbstractScikitModel):
 			return super()._find_missing(key, **kwargs)
 
 
-	def predict(self, observation, **kwargs):
-		return self._format_scikit_output(super().predict(self._format_scikit_arg(observation), **kwargs))
-	#
-	#
-	# def predict_score(self, observation, **kwargs):
-	# 	return self._format_scikit_output(super().predict_score(self._format_scikit_arg(observation), **kwargs))
-	#
-	#
-	# def predict_probs(self, observation, **kwargs):
-	# 	return self._format_scikit_output(super().predict_probs(self._format_scikit_arg(observation), **kwargs))
+	@agnosticmethod
+	def create_results_container(self, info=None, **kwargs):
+		return super().create_results_container(estimator=None if type(self) == type else self, info=info, **kwargs)
+
 
 
 	def prediction_methods(self):
-		return {'pred': self.predict}
-		# return {'pred': self.predict, 'scores': self.predict_score, 'probs': self.predict_probs}
+		return {}
+
+
+	@staticmethod
+	def _format_scikit_arg(data):
+		if data is not None and isinstance(data, torch.Tensor):
+			data = data.detach().cpu().numpy()
+		return data
+
+
+	@staticmethod
+	def _format_scikit_output(out):
+		if out is not None and isinstance(out, np.ndarray):
+			out = torch.from_numpy(out)
+		return out
 
 
 	@agnosticmethod
-	def create_results_container(self, info=None, **kwargs):
-		return super().create_results_container(estimator=None if type(self) == type else self,
-		                                        info=info, **kwargs)
+	def _get_scikit_fn(self, key):
+		raise NotImplementedError
+
+
+	@agnosticmethod
+	def _call_scikit_fn(self, fn, *args):
+		if isinstance(fn, str):
+			fn = self._get_scikit_fn(fn)
+		return self._format_scikit_output(fn(*[self._format_scikit_arg(arg) for arg in args]))
 
 
 
-class Supervised(ScikitModel):
+class AbstractSupervised(AbstractScikitModel): # just a flag to unify wrappers and nonwrappers
+	def prediction_methods(self):
+		return {'pred': self.predict}
+
+
+	def predict(self, observation, **kwargs):
+		return self._call_scikit_fn('predict', observation)
+
+
 	def _fit(self, info, observation=None, target=None):
 		if observation is None:
 			observation = info['observation']
 		if target is None:
 			target = info['target']
-		super(Model, self).fit(self._format_scikit_arg(observation), self._format_scikit_arg(target.squeeze()))
+		self._call_scikit_fn('fit', observation, target)
 		return info
 
 
 
-class Regressor(Supervised):
+class ScikitModel(AbstractScikitModel):
+	@agnosticmethod
+	def _get_scikit_fn(self, key):
+		return getattr(super(Model, self), key)
+
+
+
+class ScikitModelWrapper(AbstractScikitModel):
+	def __init__(self, estimator, **kwargs):
+		super().__init__(**kwargs)
+		self.base_estimator = estimator
+
+
+	@agnosticmethod
+	def _get_scikit_fn(self, key):
+		return getattr(self.base_estimator, key)
+
+
+
+class Regressor(AbstractSupervised):
 	score_key = 'r2'
 
-	def __init__(self, standardize_target=True, success_threshold=0.1, **kwargs):
-		super().__init__(**kwargs)
+	def __init__(self, *args, standardize_target=True, success_threshold=0.1, **kwargs):
+		super().__init__(*args, **kwargs)
 		self.standardize_target = standardize_target
 		self.success_threshold = success_threshold
+
+
+	def predict(self, observation, **kwargs):
+		pred = super().predict(observation, **kwargs)
+		if self.standardize_target:
+			pred = self.dout.unstandardize(pred)
+		return pred
 
 
 	def _fit(self, info, observation=None, target=None):
@@ -215,12 +256,12 @@ class Regressor(Supervised):
 
 
 
-class Classifier(Supervised):
+class Classifier(AbstractSupervised):
 	score_key = 'f1'
 
 
 	def predict_probs(self, observation, **kwargs):
-		return self._format_scikit_output(super().predict_probs(self._format_scikit_arg(observation), **kwargs))
+		return self._call_scikit_fn('predict_probs', observation)
 
 
 	def prediction_methods(self):
@@ -275,7 +316,6 @@ class Classifier(Supervised):
 
 
 
-
 class ParallelModel(AbstractScikitModel):
 	def __init__(self, estimators, **kwargs):
 		super().__init__(**kwargs)
@@ -295,16 +335,10 @@ class ParallelModel(AbstractScikitModel):
 
 
 	def _process_outputs(self, key, outs):
-		# return outs
 		try:
 			return torch.stack(outs, 1)
 		except RuntimeError:
 			return outs
-		# if 'predict' in key:
-		# 	pass
-		# if 'evaluate' in key:
-		# 	return outs
-		# return util.pytorch_collate(outs)
 
 
 	def _dispatch(self, key, *ins, **kwargs):
@@ -314,9 +348,14 @@ class ParallelModel(AbstractScikitModel):
 
 
 	def _merge_results(self, infos):
+		info = self.create_results_container()
+		info['individuals'] = infos
+		try:
+			scores = [i['score'] for i in infos]
+			info['score'] = np.mean(scores)
+		except KeyError:
+			pass
 		return infos
-		raise NotImplementedError
-		return default_collate(infos)
 
 
 	def fit(self, source, **kwargs):
@@ -334,29 +373,34 @@ class ParallelModel(AbstractScikitModel):
 
 
 
-class JointEstimator(ParallelModel, ScikitModel): # collection of single dim estimators (can be different spaces)
+class JointModel(ParallelModel): # collection of single dim estimators (can be different spaces)
 	def __init__(self, estimators, **kwargs):
 		super().__init__(estimators, **kwargs)
 		for estimator, dout in zip(self.estimators, self.dout):
 			estimator.dout = dout
 
 
-	SelectionBuffer = NarrowBuffer
-	def _split_source(self, source, idx, dim, key='target'):
-		return Batch(source, buffers={key: self.SelectionBuffer(source=source.get_buffer(key), idx=idx, space=dim)})
+	_split_key = 'target'
+	def _split_source(self, key, source, split_key=None):
+		if split_key is None:
+			split_key = self._split_key
+
+		target = source[split_key]
+
+		sources = []
+		start = 0
+		for dim in self.dout:
+			view = source.create_view()
+			view.register_buffer(split_key, target.narrow(1, start, len(dim)))
+			sources.append((view,))
+			start += len(dim)
+		return sources
 
 
-	def _process_inputs(self, key, source, *args, **kwargs):
+	def _process_inputs(self, key, *ins, **kwargs):
 		if key in {'fit', 'evaluate'}:
-			return [(self._split_source(source, idx, dim),) for idx, dim in enumerate(self.dout)]
-		return super()._process_inputs(key, source, *args, **kwargs)
-
-
-	# def _process_outputs(self, key, outs):
-	# 	try:
-	# 		return torch.stack(outs, 1)
-	# 	except RuntimeError:
-	# 		return super()._process_outputs(key, outs)
+			return self._split_source(key, *ins, **kwargs)
+		return super()._process_inputs(key, *ins, **kwargs)
 
 
 
@@ -379,84 +423,84 @@ class MultiEstimator(ParallelModel): # all estimators must be of the same kind (
 			return self.estimators[0].__getattribute__(item)
 
 
-	def _merge_outs(self, outs, **kwargs):
+	def _merge_predictions(self, outs, **kwargs):
 		raise NotImplementedError
 
 
 	def _process_outputs(self, key, outs, **kwargs):
 		if 'predict' in key:
-			return outs if self._raw_pred else self._merge_outs(outs, **kwargs)
+			return outs if self._raw_pred else self._merge_predictions(outs, **kwargs)
 		return super()._process_outputs(key, outs)
 
 
 
-class Periodized(MultiEstimator, Regressor): # create a copy of the estimator for the sin component
-	def _process_inputs(self, key, *ins):
-		if 'fit' in key:
-			infos = [ScikitEstimatorInfo(est, ins[0]) for est in self.estimators]
-			infos[0]._estimator_targets, infos[1]._estimator_targets = \
-				self._outspace.expand(torch.from_numpy(infos[0]._estimator_targets)).permute(2,0,1).numpy()
-			return [(ins[0], info) for info in infos]
-		return super()._process_inputs(key, *ins)
+class Periodized(Regressor, MultiEstimator): # create a copy of the estimator for the sin component
+	def __init__(self, estimators=None, **kwargs):
+		super().__init__(estimators=estimators, **kwargs)
+		assert len(self) == 2, 'must have 2 estimators for cos and sin' # TODO: use dedicated exception type
 
 
-	def evaluate(self, dataset=None, info=None, **kwargs):
-		return super(ParallelEstimator, self).evaluate(dataset=dataset, info=info, **kwargs)
+	def _prep_estimator(self, estimator): # TODO: maybe remove or fix deep copy
+		assert estimator is not None, 'No base estimator provided'
+		estimators = [estimator, copy.deepcopy(estimator)]
+		return estimators
 
 
-	def register_out_space(self, space):
-		assert isinstance(space, util.PeriodicDim)
-		super().register_out_space(util.JointSpace(util.BoundDim(-1,1), util.BoundDim(-1,1)))
-		self._outspace = space
+	_split_key = 'target'
+	def _split_source(self, key, source, split_key=None):
+		if split_key is None:
+			split_key = self._split_key
+		target = source[split_key]
+
+		cos, sin = self.dout.expand(target).permute(2,0,1)
+
+		cos_source = source.create_view()
+		sin_source = source.create_view()
+
+		cos_source.register_buffer(split_key, cos, space=self.estimators[0].dout)
+		sin_source.register_buffer(split_key, sin, space=self.estimators[1].dout)
+		return [(cos_source,), (sin_source,)]
 
 
-	def _merge_outs(self, outs, **kwargs):
+	def _process_inputs(self, key, *ins, **kwargs):
+		if key in {'fit', 'evaluate'}:
+			return self._split_source(key, *ins, **kwargs)
+		return super()._process_inputs(key, *ins, **kwargs)
+
+
+	def evaluate(self, source, online=False, **kwargs):
+		raws = None if online else super().evaluate(source)
+		out = super(ParallelModel, self).evaluate(source)
+		if raws is not None:
+			out['individuals'] = raws['individuals']
+		return out
+
+
+	def _merge_predictions(self, outs, **kwargs):
 		cos, sin = outs
-		theta = self._outspace.compress(torch.stack([cos, sin], -1))
+		theta = self.dout.compress(torch.stack([cos, sin], -1))
 		return theta
 
 
+class ScikitWrapperBuilder(AbstractScikitBuilder):
 
+	def create_scikit_regressor(self, din, dout):
+		raise NotImplementedError
 
+	def create_scikit_classifier(self, din, dout):
+		raise NotImplementedError
 
+	class SequentialWrapper(Regressor, ScikitModelWrapper):
+		pass
 
+	def create_sequential(self, din, dout):
+		return self.SequentialWrapper(self.create_scikit_regressor(din=din, dout=dout), din=din, dout=dout)
 
+	class ClassifierWrapper(Classifier, ScikitModelWrapper):
+		pass
 
-
-
-# TODO: wrappers + builder for wrappers (given estimator)
-
-
-class AbstractScikitModelWrapper(AbstractScikitModel):
-	def __init__(self, estimator, **kwargs):
-		super().__init__(**kwargs)
-		self.estimator = estimator
-
-
-	def _fit(self, info):
-		# observation, target = self._process_scikit_observation(dataset), self._process_scikit_target(dataset)
-		# observation, target = dataset.get('observation'), dataset.get('target')
-		observation, target = info['observation'], info['target']
-		if self.standardize_target:
-			target = self.dout.standarize(target)
-
-		self.estimator.fit(self.format_scikit_arg(observation), self.format_scikit_arg(target.squeeze()))
-		return info
-
-
-	def predict(self, observation):
-		pred = self.estimator.predict(self.format_scikit_arg(observation))
-		if len(pred.shape) == 1:
-			pred = pred.reshape(-1, 1)
-		pred = self.format_scikit_output(pred)
-		if self.standardize_target:
-			pred = self.dout.unstandardize(pred)
-		return pred
-
-
-# TODO: AbstractScikitModelWrapper subclasses for different types
-
-
+	def ClassifierWrapper(self, din, dout):
+		return self.SequentialWrapper(self.create_scikit_classifier(din=din, dout=dout), din=din, dout=dout)
 
 
 

@@ -14,11 +14,15 @@ from .base import Function, Container
 
 class ModelBuilder:
 	def __init__(self, **kwargs):
+		self.update(**kwargs)
+
+
+	def update(self, **kwargs):
 		self.__dict__.update(kwargs)
 
 
 	def __call__(self, **kwargs):
-		self.__dict__.update(kwargs)
+		self.update(**kwargs)
 		return self.build()
 
 
@@ -92,9 +96,11 @@ class Resultable:
 
 
 class Buildable:
-	@classmethod
-	def builder(cls, *args, **kwargs):
-		return cls.Builder(*args, cls=cls, **kwargs)
+	def __init_subclass__(cls, builder=None, **kwargs):
+		super().__init_subclass__(**kwargs)
+		if builder is None:
+			builder = cls.Builder(cls)
+		cls.builder = builder
 
 
 	class Builder(ModelBuilder):
@@ -108,7 +114,7 @@ class Buildable:
 		class MissingSourceClassError(Exception):
 			def __init__(self):
 				super().__init__('You cannot instantiate a builder without a source class '
-				                 '(use builder() instead)')
+				                 '(use cls.builder instead)')
 
 
 		def build(self):

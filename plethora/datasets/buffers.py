@@ -367,7 +367,7 @@ class BufferView(AbstractCountableDataView, RemoteBuffer):
 Buffer.View = BufferView
 
 
-class NarrowBuffer(BufferView):
+class Narrow(base.AbstractBuffer):
 	def __init__(self, start=None, size=1, dim=1, **kwargs):
 		super().__init__(**kwargs)
 		self._dim = dim
@@ -381,6 +381,15 @@ class NarrowBuffer(BufferView):
 			sample = sample.narrow(self._dim, self._start, self._size)
 		return sample
 
+
+
+class NarrowBuffer(Narrow, Buffer):
+	pass
+
+
+
+class NarrowBufferView(Narrow, BufferView):
+	pass
 
 
 

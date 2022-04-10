@@ -139,6 +139,8 @@ class Prepared: # TODO: add autoprepare using __certify__
 		raise NotImplementedError
 
 
+DEFAULT_ROOT = os.getenv('PLETHORA_PATH', 'local_data/')
+
 
 class Rooted:
 	_root = None
@@ -151,7 +153,7 @@ class Rooted:
 	@staticmethod
 	def _infer_root(root=None):
 		if root is None:
-			root = os.getenv('PLETHORA_PATH', 'local_data/')
+			root = DEFAULT_ROOT
 		root = Path(root)
 		os.makedirs(str(root), exist_ok=True)
 		return root
