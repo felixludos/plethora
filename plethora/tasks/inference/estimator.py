@@ -499,7 +499,7 @@ class ScikitWrapperBuilder(AbstractScikitBuilder):
 	class ClassifierWrapper(Classifier, ScikitModelWrapper):
 		pass
 
-	def ClassifierWrapper(self, din, dout):
+	def create_classifier(self, din, dout):
 		return self.SequentialWrapper(self.create_scikit_classifier(din=din, dout=dout), din=din, dout=dout)
 
 
