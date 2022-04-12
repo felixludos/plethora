@@ -47,18 +47,18 @@ class Resultable:
 
 
 	class ResultsContainer(Seeded, Container):
-		def __init__(self, source=None, dataset=None, score_key=None, **kwargs):
-			# if not _skip_super_init:
+		def __init__(self, source=None, score_key=None, **kwargs):
 			super().__init__(**kwargs)
-			self.dataset = dataset
-			if source is None:
-				source = dataset
 			self.source = source
 			self._score_key = score_key
 
 
 		class NoScoreKeyError(Exception):
 			pass
+
+
+		def merge_results(self, info):
+			self.update(info)
 
 
 		def _load_missing(self, key, sel=None, **kwargs):
@@ -74,6 +74,10 @@ class Resultable:
 				self[key] = self._load_missing(key, **kwargs) # load and cache
 				return self[key]
 			return super()._find_missing(key)
+
+
+		def __contains__(self, item):
+			return super().__contains__(item) or (item == 'score' and super().__contains__(self._score_key))
 
 
 	@classmethod
@@ -125,8 +129,9 @@ class Buildable:
 
 
 class Computable(Resultable):
-	def compute(self, **kwargs):
-		info = self.create_results_container(**kwargs)
+	@agnosticmethod
+	def compute(self, source=None, **kwargs):
+		info = self.create_results_container(source=source, **kwargs)
 		return self._compute(info)
 
 
@@ -143,7 +148,7 @@ class Model(Resultable, Buildable):
 
 
 	def fit(self, source, **kwargs):
-		info = self.create_fit_results_container(**kwargs)
+		info = self.create_fit_results_container(source=source, **kwargs)
 		return self._fit(info)
 
 
@@ -153,7 +158,7 @@ class Model(Resultable, Buildable):
 
 
 	def evaluate(self, source, **kwargs):
-		info = self.create_results_container(**kwargs)
+		info = self.create_results_container(source=source, **kwargs)
 		return self._evaluate(info)
 
 

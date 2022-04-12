@@ -1,178 +1,131 @@
-from omnibelt import get_printer, unspecified_argument
+from omnibelt import get_printer, unspecified_argument, agnosticmethod
 
 from ...framework.util import spaces
 from ..base import Task, BatchedTask, SimpleEvaluationTask
 from ...datasets.base import EncodableDataset, BufferView, SupervisedDataset
+
+from .estimators import GradientBoostingBuilder
 
 prt = get_printer(__file__)
 
 
 
 class DownstreamTask(Task):
-	def __init__(self, dataset=None, encoder=None, **kwargs):
-		self.encoder = encoder
+	def __init__(self, encoder=None, **kwargs):
 		super().__init__(**kwargs)
-		if dataset is not None:
-			dataset = self._wrap_dataset(dataset)
-		self.dataset = dataset
+		self.encoder = encoder
 
 
 	ObservationBuffer = EncodableDataset.EncodedBuffer
-	def _wrap_dataset(self, dataset):
-		dataset = dataset.copy()
-		dataset.register_buffer('observation', self.ObservationBuffer(encoder=getattr(self, 'encoder', None),
+	def _wrap_dataset(self, dataset, encoder=None):
+		if encoder is None:
+			encoder = self.encoder
+		view = dataset.create_view()
+		view.register_buffer('observation', self.ObservationBuffer(encoder=encoder,
 		                                                     source=dataset.get_buffer('observation')))
-		return dataset
+		return view
+
+
+	def create_results_container(self, encoder=unspecified_argument, source=None, dataset=None, **kwargs):
+		if encoder is unspecified_argument:
+			encoder = self.encoder
+		if dataset is not None:
+			dataset = self._wrap_dataset(dataset, encoder)
+		if source is not None:
+			source = self._wrap_dataset(source, encoder)
+		return super().create_results_container(encoder=encoder, dataset=dataset, source=source, **kwargs)
 
 
 	class ResultsContainer(Task.ResultsContainer):
+		def __init__(self, encoder=None, **kwargs):
+			super().__init__(**kwargs)
+			self.encoder = encoder
+
+
 		@property
 		def encoder(self):
 			return self._encoder
 		@encoder.setter
 		def encoder(self, encoder):
 			self._encoder = encoder
-			self.dataset.get_buffer('observation').encoder = encoder
+			if self.source is not None:
+				self.source.get_buffer('observation').encoder = encoder
+			if self.dataset is not None:
+				self.dataset.get_buffer('observation').encoder = encoder
 
 
 
-class AbstractInferenceTask(DownstreamTask):
-	def __init__(self, encoder=None, eval_split=0.2, **kwargs):
+class InferenceTask(DownstreamTask):
+	eval_split = 0.2
+
+	def __init__(self, eval_split=unspecified_argument, **kwargs):
 		super().__init__(**kwargs)
-		self.encoder = encoder
-		self.eval_split = eval_split
-	
+		if eval_split is unspecified_argument:
+			self.eval_split = eval_split
+
 	
 	class ResultsContainer(DownstreamTask.ResultsContainer):
-		def train(self):
-			self.dataset = self.train_dataset
-	
-	
-		def eval(self):
-			self.dataset = self.eval_dataset
-
-
-		# @Node.importance.setter
-		# def importance(self, new_importance):
-		# 	# You can change the order of these two lines:
-		# 	assert new_importance >= 3
-		# 	Node.importance.fset(self, new_importance)
+		def __init__(self, builder=None, **kwargs):
+			super().__init__(**kwargs)
+			self.builder = builder
 
 
 		@property
 		def din(self):
-			return self.dataset.observation_space
+			return self.source.observation_space
 
 
 		@property
 		def dout(self):
-			return self.dataset.target_space
-	
-	
-	def prepare(self, **kwargs):
-		info = super().prepare(**kwargs)
-		info.encoder = self.encoder
-		info.train_dataset, info.eval_dataset = self._prepare_datasets(self.dataset, self.encoder)
+			return self.source.target_space
+
+
+	def create_results_container(self, eval_split=unspecified_argument, **kwargs):
+		if eval_split is unspecified_argument:
+			eval_split = self.eval_split
+		info = super().create_results_container(**kwargs)
+		self._prepare_source(info, eval_split=eval_split)
+		self._prepare_estimator(info)
 		return info
 	
 	
-	@classmethod
-	def run(cls, info):
-		# info.train()
-		cls._train(info)
-		# info.eval()
-		cls._eval(info)
+	@agnosticmethod
+	def run(self, info):
+		self._train(info)
+		self._eval(info)
 		return info
 
 
 	@staticmethod
-	def _prepare_datasets(dataset, encoder):
-		raise NotImplementedError
-	
-	
+	def _prepare_source(info, eval_split=None, shuffle=True):
+		info.train_dataset, info.eval_dataset = info.source.split([None, eval_split],
+		                                                          shuffle=shuffle, register_modes=False)
+		return info
+
+
+	EstimatorBuilder = GradientBoostingBuilder # default builder using gradient boosting trees
+	@agnosticmethod
+	def _prepare_estimator(self, info, *, builder=None, source=None, **kwargs):
+		if source is None:
+			source = info.source
+		if builder is None:
+			builder = info.builder
+		if builder is None:
+			builder = self.EstimatorBuilder()
+		info.estimator = builder(source=source, **kwargs)
+		return info
+
+
 	@staticmethod
 	def _train(info):
-		raise NotImplementedError
+		info.merge_results(info.estimator.fit(info.train_dataset))
+		return info
 
 
 	@staticmethod
 	def _eval(info):
-		raise NotImplementedError
-
-
-
-class InferenceTask(AbstractInferenceTask):
-	@staticmethod
-	def _train(info):
-		info.estimator.fit(info.train_dataset)
+		info.merge_results(info.estimator.evaluate(info.eval_dataset))
 		return info
-
-
-	@staticmethod
-	def _eval(info):
-		info.estimator.evaluate(info.eval_dataset)
-		return info
-
-
-
-class Scikit_InferenceTask(AbstractInferenceTask):
-	def prepare(self, **kwargs):
-		info = super().prepare(**kwargs)
-		info.estimator = self.build(info.get_din(), info.get_dout())
-		info.use_joint = isinstance(info.estimator, list)
-		return info
-	
-
-	#
-	#
-	# class TargetBuffer(WrappedBuffer):
-	# 	pass
-	#
-	#
-	# @classmethod
-	# def wrap_dataset(cls, dataset, encoder=None):
-	# 	obs_buffer = dataset.get_buffer('observation')
-	# 	target_buffer = dataset.get_buffer('target')
-	#
-	# 	dataset = SupervisedDataset().load()
-	# 	dataset.register_buffer('observation', cls.ObservationBuffer(encoder=encoder, source=obs_buffer))
-	# 	dataset.register_buffer('target', cls.TargetBuffer(source=target_buffer))
-	# 	return dataset
-	
-	
-	def _prepare_datasets(self, dataset, encoder):
-		train_dataset, eval_dataset = dataset.split([None, self.eval_split], shuffle=True, register_modes=False)
-		# train_dataset = self.wrap_dataset(train_dataset, encoder=self.encoder)
-		# eval_dataset = self.wrap_dataset(eval_dataset, encoder=self.encoder)
-		
-		train_dataset.register_buffer('observation',
-		                              self.ObservationBuffer(encoder=encoder,
-		                                                     source=train_dataset.get_buffer('observation')))
-		eval_dataset.register_buffer('observation', self.ObservationBuffer(encoder=encoder,
-		                                                     source=eval_dataset.get_buffer('observation')))
-		return train_dataset, eval_dataset
-	
-	
-	class MissingEstimatorError(Exception):
-		def __init__(self, din, dout):
-			super().__init__(f'input: {din}, output: {dout}')
-	
-	
-	@classmethod
-	def build(cls, din, dout):
-		if isinstance(dout, spaces.JointSpace):
-			return [cls.build(din, dim) for dim in dout]
-		
-		elif isinstance(dout, spaces.CategoricalDim):
-			return
-		
-		
-		
-		raise cls.MissingEstimatorError(din, dout)
-
-
-
-# TODO: joint estimator
 
 
 

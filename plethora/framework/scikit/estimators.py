@@ -5,78 +5,14 @@ import torch
 from torch.utils.data.dataloader import default_collate
 import numpy as np
 from sklearn import base, metrics, cluster
-from sklearn.ensemble import GradientBoostingRegressor, GradientBoostingClassifier
+# from sklearn.ensemble import GradientBoostingRegressor, GradientBoostingClassifier
 
-from ...datasets.buffers import Buffer, NarrowBuffer
-from ...datasets.base import Batch
-from ...framework.util import spaces
-from ...framework.base import Function
-from ...framework.models import Model, ModelBuilder
+from ..util import spaces
+from ..base import Function
+from ..models import Model
 
 
-
-class AbstractScikitBuilder(ModelBuilder):
-
-	JointModel = JointModel
-	def create_joint(self, din, dout, estimators, **kwargs):
-		return self.JointModel(estimators, din=din, dout=dout, **kwargs)
-
-
-	def create_regressor(self, din, dout):
-		if isinstance(dout, spaces.PeriodicDim):
-			return self.create_periodic(din, dout)
-		return self.create_sequential(din, dout)
-
-
-	def create_periodic(self, din, dout, component_dim=None):
-		if component_dim is None:
-			component_dim = spaces.BoundDim(-1,1)
-		return Periodized([self.create_regressor(din=din, dout=component_dim),
-		                   self.create_regressor(din=din, dout=component_dim)])
-
-
-	def create_sequential(self, din, dout):
-		raise NotImplementedError
-
-
-	def create_classifier(self, din, dout):
-		raise NotImplementedError
-
-
-	class InvalidDimError(Exception):
-		def __init__(self, din, dout):
-			super().__init__(f'din={din}, dout={dout}')
-			self.din, self.dout = din, dout
-
-
-	def build(self, din=None, dout=None):
-		if din is None:
-			din = getattr(self, 'din', None)
-		if dout is None:
-			dout = getattr(self, 'dout', None)
-		if din is None or dout is None:
-			dataset = getattr(self, 'dataset', None)
-			if dataset is None:
-				raise self.MissingKwargsError('din', 'dout', 'dataset')
-			if din is None:
-				din = dataset.din
-			if dout is None:
-				dout = dataset.dout
-
-		if isinstance(dout, spaces.JointSpace):
-			return self.create_joint(din, dout, [self.build(din=din, dout=dim) for dim in dout])
-
-		elif isinstance(dout, spaces.CategoricalDim):
-			return self.create_classifier(din, dout)
-
-		elif isinstance(dout, spaces.ContinuousDim):
-			return self.create_regressor(din, dout)
-
-		raise self.InvalidDimError(din=din, dout=dout)
-
-
-
-class AbstractScikitModel(Model, Function):
+class AbstractScikitEstimator(Model, Function):
 	class ResultsContainer(Model.ResultsContainer):
 		def __init__(self, estimator=None, **kwargs):
 			super().__init__(**kwargs)
@@ -146,7 +82,7 @@ class AbstractScikitModel(Model, Function):
 
 
 
-class AbstractSupervised(AbstractScikitModel): # just a flag to unify wrappers and nonwrappers
+class AbstractSupervised(AbstractScikitEstimator): # just a flag to unify wrappers and nonwrappers
 	def prediction_methods(self):
 		return {'pred': self.predict}
 
@@ -165,14 +101,14 @@ class AbstractSupervised(AbstractScikitModel): # just a flag to unify wrappers a
 
 
 
-class ScikitModel(AbstractScikitModel):
+class ScikitEstimator(AbstractScikitEstimator):
 	@agnosticmethod
 	def _get_scikit_fn(self, key):
 		return getattr(super(Model, self), key)
 
 
 
-class ScikitModelWrapper(AbstractScikitModel):
+class ScikitEstimatorWrapper(AbstractScikitEstimator):
 	def __init__(self, estimator, **kwargs):
 		super().__init__(**kwargs)
 		self.base_estimator = estimator
@@ -316,7 +252,7 @@ class Classifier(AbstractSupervised):
 
 
 
-class ParallelModel(AbstractScikitModel):
+class ParallelEstimator(AbstractScikitEstimator):
 	def __init__(self, estimators, **kwargs):
 		super().__init__(**kwargs)
 		self.estimators = estimators
@@ -373,7 +309,7 @@ class ParallelModel(AbstractScikitModel):
 
 
 
-class JointModel(ParallelModel): # collection of single dim estimators (can be different spaces)
+class JointEstimator(ParallelEstimator): # collection of single dim estimators (can be different spaces)
 	def __init__(self, estimators, **kwargs):
 		super().__init__(estimators, **kwargs)
 		for estimator, dout in zip(self.estimators, self.dout):
@@ -404,7 +340,7 @@ class JointModel(ParallelModel): # collection of single dim estimators (can be d
 
 
 
-class MultiEstimator(ParallelModel): # all estimators must be of the same kind (out space)
+class MultiEstimator(ParallelEstimator): # all estimators must be of the same kind (out space)
 	def __init__(self, raw_pred=False, **kwargs):
 		super().__init__(**kwargs)
 		self._raw_pred = raw_pred
@@ -470,7 +406,7 @@ class Periodized(Regressor, MultiEstimator): # create a copy of the estimator fo
 
 	def evaluate(self, source, online=False, **kwargs):
 		raws = None if online else super().evaluate(source)
-		out = super(ParallelModel, self).evaluate(source)
+		out = super(ParallelEstimator, self).evaluate(source)
 		if raws is not None:
 			out['individuals'] = raws['individuals']
 		return out
@@ -480,30 +416,6 @@ class Periodized(Regressor, MultiEstimator): # create a copy of the estimator fo
 		cos, sin = outs
 		theta = self.dout.compress(torch.stack([cos, sin], -1))
 		return theta
-
-
-class ScikitWrapperBuilder(AbstractScikitBuilder):
-
-	def create_scikit_regressor(self, din, dout):
-		raise NotImplementedError
-
-	def create_scikit_classifier(self, din, dout):
-		raise NotImplementedError
-
-	class SequentialWrapper(Regressor, ScikitModelWrapper):
-		pass
-
-	def create_sequential(self, din, dout):
-		return self.SequentialWrapper(self.create_scikit_regressor(din=din, dout=dout), din=din, dout=dout)
-
-	class ClassifierWrapper(Classifier, ScikitModelWrapper):
-		pass
-
-	def create_classifier(self, din, dout):
-		return self.SequentialWrapper(self.create_scikit_classifier(din=din, dout=dout), din=din, dout=dout)
-
-
-
 
 
 

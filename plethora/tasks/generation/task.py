@@ -1,24 +1,24 @@
 import torch
-from omnibelt import get_printer, unspecified_argument
+from omnibelt import get_printer, unspecified_argument, agnosticmethod
 from ...framework import util
-from ..base import Task, BatchedTask, SimpleEvaluationTask
+from ..base import Task, BatchedTask, SimpleEvaluationTask, Cumulative
 
 prt = get_printer(__file__)
 
 
 class AbstractGenerationTask(BatchedTask):
 	@classmethod
-	def run_step(cls, batch, info):
+	def run_step(cls, info):
 		info.clear()
-		info.set_batch(batch)
 		cls._generate_step(info)
 		cls._judge_step(info)
 		return info
 
 
 	@staticmethod
-	def _generate_step(info):
-		raise NotImplementedError
+	def _generate_step(info, generated_key='generated'):
+		info[generated_key] = info.generator.generate(info.batch.size, gen=info.gen)
+		return info
 
 
 	@staticmethod
@@ -33,68 +33,33 @@ class DiscriminatorGenerationTask(SimpleEvaluationTask, AbstractGenerationTask):
 		self.generator = generator
 		self.discriminator = discriminator
 
-	@classmethod
-	def _eval_step(cls, info, *, comparison_key='comparison'):
-		cls._generate_step(info)
-		cls._judge_step(info, comparison_key=comparison_key)
-		return info
-
 
 	@staticmethod
-	def _generate_step(info, generated_key='samples'):
-		info[generated_key] = info.generator.generate(info.batch.size, gen=info.gen)
-		return info
-	
-
-	@staticmethod
-	def _judge_step(info, *, samples=None, comparison_key='comparison'):
-		if samples is None:
-			samples = info['samples']
-		info[comparison_key] = info.discriminator.judge(samples)
+	def _judge_step(info, *, generated=None):
+		if generated is None:
+			generated = info['generated']
+		info[info.evaluation_key] = info.discriminator.judge(generated)
 		return info
 
 
 
 class AbstractFeatureGenerationTask(AbstractGenerationTask):
-	def __init__(self, generator=None, extractor=None, feature_criterion=None, **kwargs):
+	def __init__(self, generator=None, extractor=None, **kwargs):
 		super().__init__(**kwargs)
 		self.generator = generator
 		self.extractor = extractor
-		self.feature_criterion = feature_criterion
 	
 	
-	class ResultsContainer(AbstractGenerationTask.ResultsContainer):
-		def __init__(self, **kwargs):
-			super().__init__(**kwargs)
-			self.fake_features = []
-			self.real_features = []
-		
-		
-		def accumulate_real(self, features):
-			if self.real_features is not None:
-				self.real_features.append(features)
-		
-		
-		def accumulate_fake(self, features):
-			self.fake_features.append(features)
-		
-		
-		def aggregate_real(self):
-			if self.real_features is not None:
-				return torch.cat(self.real_features)
-		
-		
-		def aggregate_fake(self):
-			if self.fake_features is not None:
-				return torch.cat(self.fake_features)
-	
-	
-	def prepare(self, generator=None, extractor=None, **kwargs):
+	class ResultsContainer(Cumulative, AbstractGenerationTask.ResultsContainer):
+		_auto_cumulative_keys = ['real', 'fake']
+
+
+	def create_results_container(self, generator=None, extractor=None, **kwargs):
 		if generator is None:
-			prt.warning('No generator provided')
+			generator = self.generator
 		if extractor is None:
-			prt.warning('No extractor provided')
-		info = super().prepare(**kwargs)
+			extractor = self.extractor
+		info = super().create_results_container(**kwargs)
 		info.generator = generator
 		info.extractor = extractor
 		return info

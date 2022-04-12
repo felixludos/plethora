@@ -73,25 +73,58 @@ class DeviceContainer(Device):
 
 
 class Seeded:
-	def __init__(self, gen=None, seed=None, **kwargs):
+	_seed = None
+	def __init_subclass__(cls, **kwargs):
+		super().__init_subclass__(**kwargs)
+		cls.gen = None
+		cls.gen = cls.create_rng(seed=cls._seed)
+
+
+	def __init__(self, gen=unspecified_argument, seed=unspecified_argument, **kwargs):
 		super().__init__(**kwargs)
+		if seed is unspecified_argument:
+			if gen is not None:
+				self.seed = None
+				self.gen = gen
+		else:
+			self.seed = seed
+
+		if seed is unspecified_argument:
+			seed = self.__class__._seed
+		self.seed = seed
+		if gen is unspecified_argument:
+			gen = util.gen_random_seed(gen=self.gen, seed=seed)
+		if gen is not None:
+			self.gen = gen
 		self.seed = seed
 		self.gen = gen
+
+
+	@classmethod
+	def gen_random_seed(cls, gen=None):
 		if gen is None:
-			self.set_seed(self.seed)
+			gen = cls.gen
+		return util.gen_random_seed(gen)
 
 
-	@staticmethod
-	def create_rng(gen=None, seed=None):
+	@classmethod
+	def create_rng(cls, seed=None, base_gen=None):
 		if seed is None:
-			seed = util.gen_random_seed(gen)
+			seed = cls.gen_random_seed(base_gen)
 		gen = torch.Generator()
 		gen.manual_seed(seed)
 		return gen
 
 
-	def set_seed(self, seed=None):
-		self.gen = self.create_rng(gen=self.gen, seed=seed)
+	@property
+	def seed(self):
+		return self._seed
+	@seed.setter
+	def seed(self, seed):
+		# if seed is None:
+		# 	seed = util.gen_random_seed(self.gen)
+		self._seed = seed
+		self.gen = self.create_rng(seed=seed)
 
 
 
