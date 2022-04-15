@@ -442,8 +442,8 @@ class CachedView(SourceView, base.Container):
 
 
 	def _find_missing(self, key, **kwargs):
-		val = self.get(key, default=self._missing, **kwargs)
-		if val is self._missing:
+		val = self.get(key, default=unspecified_argument, **kwargs)
+		if val is unspecified_argument:
 			return super()._find_missing(key)
 		return val
 

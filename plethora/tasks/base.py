@@ -3,26 +3,15 @@ import torch
 
 from omnibelt import get_printer, agnosticmethod, unspecified_argument
 
-from ..framework.features import Seeded, Prepared
+from ..framework.features import Seeded, Prepared, with_args
 from ..framework.base import Container
 from ..framework.models import Computable
 
 prt = get_printer(__file__)
 
 
+@with_args(slim=False, online=False, dataset=None)
 class Task(Computable, Prepared, Seeded): # TODO: specify random seed for reproducibility
-	_slim = False
-	_online = False
-
-	def __init__(self, dataset=None, slim=None, online=None, **kwargs):
-		super().__init__(**kwargs)
-		self.dataset = dataset
-		if slim is not None:
-			self._slim = slim
-		if online is not None:
-			self._online = online
-
-
 	@agnosticmethod
 	def score_names(self):
 		return set() if self.score_key is None else {'score'}
@@ -34,13 +23,6 @@ class Task(Computable, Prepared, Seeded): # TODO: specify random seed for reprod
 
 	
 	class ResultsContainer(Computable.ResultsContainer):
-		def __init__(self, dataset=None, slim=False, online=False, **kwargs):
-			super().__init__(**kwargs)
-			self.dataset = dataset
-			self.online = online
-			self.slim = slim
-
-
 		@property
 		def source(self):
 			return self._source if self._source is None else self.dataset
@@ -54,20 +36,10 @@ class Task(Computable, Prepared, Seeded): # TODO: specify random seed for reprod
 
 
 	@agnosticmethod
-	def create_results_container(self, source=None, dataset=None, slim=None, online=None,
-	                             gen=None, seed=unspecified_argument, **kwargs):
-		if dataset is None:
-			dataset = getattr(self, 'dataset', None)
-		if slim is None:
-			slim = self._slim
-		if online is None:
-			online = self._online
-		if online is None: # if a source is provided, by default, that makes it "online"
-			online = source is not None
+	def create_results_container(self, seed=unspecified_argument, **kwargs):
 		if seed is unspecified_argument:
 			seed = self._seed
-		return super().create_results_container(source=source, dataset=dataset, slim=slim, online=online,
-		                                        seed=seed, **kwargs)
+		return super().create_results_container(seed=seed, **kwargs)
 		
 		
 	@staticmethod
@@ -128,26 +100,22 @@ class BatchedTask(Task):
 			self.hard_sample_limit = hard_sample_limit
 		if pbar is not unspecified_argument:
 			self.pbar = pbar
+		# self.register_arg('num_samples', 'batch_size', 'force_batch_size', 'hard_sample_limit', 'pbar')
 
 
-	class ResultsContainer(Task.ResultsContainer):
-		def new_batch(self, batch):
-			self.clear()
-			self.source = batch
-
-
-		@property
-		def source(self): # prevent source from defaulting to
-			return self._source
-		@source.setter
-		def source(self, source):
-			self._source = source
+	# class ResultsContainer(Task.ResultsContainer):
+	# 	@property
+	# 	def source(self): # prevent source (batch) from defaulting to full dataset
+	# 		return self._source
+	# 	@source.setter
+	# 	def source(self, source):
+	# 		self._source = source
 
 
 	@agnosticmethod
 	def loop(self, info):
 		if info.source is not None:
-			info.new_batch(info.source)
+			info.new_source(info.source)
 			yield info
 			return
 
@@ -155,7 +123,7 @@ class BatchedTask(Task):
 		                                force_batch_size=self.force_batch_size, hard_limit=self.hard_sample_limit,
 		                                gen=info.gen)
 		for batch in itr:
-			info.new_batch(batch)
+			info.new_source(batch)
 			yield info
 
 
@@ -178,13 +146,17 @@ class BatchedTask(Task):
 
 
 class Cumulative(BatchedTask.ResultsContainer):
-	_auto_cumulative_keys = None
+	_auto_cumulative_keys = set()
 
-	def __init__(self, auto_cumulative_keys=unspecified_argument, **kwargs):
+	def __init__(self, **kwargs):
 		super().__init__(**kwargs)
-		if auto_cumulative_keys is not unspecified_argument:
-			self._auto_cumulative_keys = auto_cumulative_keys
+		self._auto_cumulative_keys = self._auto_cumulative_keys.copy()
 		self._cumulatives = {}
+
+
+	@agnosticmethod
+	def register_cumulative(self, *keys):
+		self._auto_cumulative_keys.update(keys)
 
 
 	def accumulate(self, key, val):
@@ -193,12 +165,15 @@ class Cumulative(BatchedTask.ResultsContainer):
 		self._cumulatives[key].append(val)
 
 
-	def new_batch(self, batch): # auto accumulate
-		super().new_batch(batch)
-		if self._auto_cumulative_keys is not None:
-			for key in self._auto_cumulative_keys:
-				if key in self:
-					self.accumulate(key, self[key])
+	def auto_accumulate(self):
+		for key in self._auto_cumulative_keys:
+			if key in self:
+				self.accumulate(key, self[key])
+
+
+	def new_source(self, source): # auto accumulate
+		super().new_source(source)
+		self.auto_accumulate()
 
 
 	def clear_cumulatives(self):
@@ -216,33 +191,16 @@ class Cumulative(BatchedTask.ResultsContainer):
 
 
 
-
+@with_args(evaluation_key='scores')
 class SimpleEvaluationTask(BatchedTask):
-	evaluation_key = 'scores'
 	score_key = 'mean'
-	
-	
+
 	class ResultsContainer(Cumulative, BatchedTask.ResultsContainer):
-		def __init__(self, evaluation_key=None, auto_cumulative_keys=unspecified_argument, **kwargs):
-			if auto_cumulative_keys is unspecified_argument and evaluation_key is not None:
-				auto_cumulative_keys = [evaluation_key]
-			super().__init__(auto_cumulative_keys=auto_cumulative_keys, **kwargs)
+		def __init__(self, evaluation_key=None, **kwargs):
+			super().__init__(**kwargs)
+			if evaluation_key is not None:
+				self.register_cumulative(evaluation_key)
 			self.evaluation_key = evaluation_key
-
-
-		def accumulate(self, key=None, val=None):
-			if key is None or val is None:
-				if val is None:
-					val = key
-				key = self.evaluation_key
-				return super().accumulate(key, val)
-			return super().accumulate(key, val)
-
-
-		def aggregate(self, key=None):
-			if key is None:
-				key = self.evaluation_key
-			return super().aggregate(key)
 
 
 	@agnosticmethod
@@ -259,17 +217,20 @@ class SimpleEvaluationTask(BatchedTask):
 
 	@agnosticmethod
 	def heavy_results(self):
-		return {self.evaluation_key, *super().heavy_results()}
+		heavy = super().heavy_results()
+		if self.evaluation_key is not None:
+			heavy.add(self.evaluation_key)
+		return heavy
 	
 
 	@staticmethod
 	def aggregate(info):
 		info = super().aggregate(info)
 
-		scores = info.aggregate()
+		scores = info.aggregate(info.evaluation_key)
 
 		info.update({
-			'scores': scores,
+			info.evaluation_key: scores,
 			'mean': scores.mean().item(),
 			'max': scores.max().item(),
 			'min': scores.min().item(),

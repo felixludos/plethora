@@ -40,8 +40,7 @@ class AbstractScikitEstimator(Model, Function):
 
 		def _find_missing(self, key, **kwargs):
 			if self.estimator is not None and key in self.estimator.prediction_methods():
-				self[key] = self._infer(key, **kwargs)
-				return self[key]
+				return self._infer(key, **kwargs)
 			return super()._find_missing(key, **kwargs)
 
 

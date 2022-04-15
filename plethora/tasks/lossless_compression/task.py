@@ -1,35 +1,21 @@
 import torch
-from omnibelt import get_printer
-from ..base import Task, BatchedTask
+from omnibelt import get_printer, agnosticmethod
+from ..base import Task, BatchedTask, SimpleEvaluationTask
 
+from ...framework import with_hparams, with_args, with_modules, models
 from .bits_back import BitsBackCompressor
 
 prt = get_printer(__file__)
 
 
 
-class AccumulationContainer(ResultsContainer):
-	def __init__(self, **kwargs):
-		super().__init__(**kwargs)
-		self.counts = []
-
-
-	def accumulate(self, counts):
-		self.counts.append(counts)
-
-
-	def aggregate(self):
-		return torch.cat(self.counts)
-
-
-
-class AbstractLosslessCompressionTask(BatchedTask):
-	@classmethod
-	def run_step(cls, batch, info, **kwargs):
-		info.clear()
-		info.set_batch(batch)
-		cls._compress(info)
-		cls._decompress(info)
+@with_args(strict_verify=False)
+class AbstractLosslessCompressionTask(SimpleEvaluationTask):
+	@agnosticmethod
+	def run_step(self, info, **kwargs):
+		self._compress(info)
+		if info.strict_verify:
+			self._decompress(info)
 		return info
 
 
@@ -43,35 +29,22 @@ class AbstractLosslessCompressionTask(BatchedTask):
 		raise NotImplementedError
 
 
+	@agnosticmethod
+	def aggregate(self, info):
+		info = super().aggregate(info)
+		if not info.strict_verify:
+			self._decompress(info)
+		return info
 
+
+	class DecompressFailed(Exception):
+		pass
+
+
+
+@with_modules(compressor=models.Compressor)
 class LosslessCompressionTask(AbstractLosslessCompressionTask):
-	def __init__(self, compressor=None, decompressor=None, encoder=None, decoder=None,
-	             sample_format=None, score_key=None, **kwargs):
-		if score_key is None:
-			score_key = 'bpd'
-		if sample_format is None:
-			sample_format = 'observation'
-		super().__init__(sample_format=sample_format, score_key=score_key, **kwargs)
-		self.compressor = compressor
-		self.decompressor = decompressor
-		self.encoder = encoder
-		self.decoder = decoder
-
-
-	@staticmethod
-	def score_names():
-		return ['mean', 'std', 'min', 'max', *super().score_names()]
-
-
-	@staticmethod
-	def create_results_container(dataset=None, **kwargs):
-		return AccumulationContainer(dataset=dataset, **kwargs)
-
-
-	def _compute(self, **kwargs):
-		return super()._compute(encoder=self.encoder, decoder=self.decoder,
-		                        compressor=self.compressor, decompressor=self.decompressor,
-		                        **kwargs)
+	score_key = 'bpd'
 
 
 	@classmethod
@@ -82,8 +55,7 @@ class LosslessCompressionTask(AbstractLosslessCompressionTask):
 		if decoder is None:
 			prt.warning('No decoder provided')
 		if compressor is None:
-			compressor = BitsBackCompressor(encoder, decoder,
-			                                beta_confidence=beta_confidence, default_scale=default_scale)
+			compressor =
 		if decompressor is None:
 			prt.warning('No decompressor provided')
 			decompressor = compressor
@@ -138,6 +110,28 @@ class LosslessCompressionTask(AbstractLosslessCompressionTask):
 			'std': counts.std(),
 		})
 		return info
+
+
+
+
+@with_modules(compressor=models.Compressor, required=False)
+@with_modules(encoder=models.Encoder, decoder=models.Decoder)
+@with_hparams(beta_confidence=1000, default_scale=0.1)
+class BitsBackCompressionTask(AbstractLosslessCompressionTask):
+	@agnosticmethod
+	def create_results_container(self, info=None, **kwargs):
+		info = super().create_results_container(info=info, **kwargs)
+		info.compressor = BitsBackCompressor(info.encoder, info.decoder,
+			                                beta_confidence=info.beta_confidence, default_scale=info.default_scale)
+		return info
+
+
+
+
+
+	pass
+
+
 
 
 

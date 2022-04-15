@@ -1,23 +1,46 @@
 import torch
 from omnibelt import get_printer, unspecified_argument, agnosticmethod
-from ...framework import util
+from ...framework import util#, with_hparams, with_modules, models, with_args
 from ..base import Task, BatchedTask, SimpleEvaluationTask, Cumulative
 
 prt = get_printer(__file__)
 
 
+class auto_args:
+	def __init__(self, _out_key=None, **args):
+		self._out_key = None
+		self.args = args
+
+
+	def __call__(self, *args, **kwargs):
+		
+		pass
+
+
+	# def __get__(self, instance, owner):
+	# 	pass
+
+
+@with_modules(generator=models.Generator)
 class AbstractGenerationTask(BatchedTask):
-	@classmethod
-	def run_step(cls, info):
+	generated_key = 'generated'
+
+	@agnosticmethod
+	def run_step(self, info):
 		info.clear()
-		cls._generate_step(info)
-		cls._judge_step(info)
+		self._generate_step(info)
+		self._judge_step(info)
 		return info
 
 
-	@staticmethod
-	def _generate_step(info, generated_key='generated'):
-		info[generated_key] = info.generator.generate(info.batch.size, gen=info.gen)
+	@auto_args('eval', observation='observation')
+	@auto_attrs('eval', observation='observation')
+	def judge(self, observation=None):
+
+
+	@agnosticmethod
+	def _generate_step(self, info):
+		info[self.generated_key] = info.generator.generate(info.batch.size, gen=info.gen)
 		return info
 
 
@@ -27,82 +50,56 @@ class AbstractGenerationTask(BatchedTask):
 
 
 
+@with_modules(discriminator=models.Discriminator)
 class DiscriminatorGenerationTask(SimpleEvaluationTask, AbstractGenerationTask):
-	def __init__(self, generator=None, discriminator=None, **kwargs):
-		super().__init__(**kwargs)
-		self.generator = generator
-		self.discriminator = discriminator
 
-
-	@staticmethod
-	def _judge_step(info, *, generated=None):
+	@agnosticmethod
+	def _judge_step(self, info, *, generated=None):
 		if generated is None:
-			generated = info['generated']
+			generated = info[self.generated_key]
 		info[info.evaluation_key] = info.discriminator.judge(generated)
 		return info
 
 
 
+@with_modules(extractor=models.Extractor, required=False)
 class AbstractFeatureGenerationTask(AbstractGenerationTask):
-	def __init__(self, generator=None, extractor=None, **kwargs):
-		super().__init__(**kwargs)
-		self.generator = generator
-		self.extractor = extractor
-	
-	
-	class ResultsContainer(Cumulative, AbstractGenerationTask.ResultsContainer):
-		_auto_cumulative_keys = ['real', 'fake']
+	observation_key = 'observation'
+
+	fake_key = 'fake'
+	real_key = 'real'
+	fake_features_key = 'fake_features'
+	real_features_key = 'real_features'
 
 
-	def create_results_container(self, generator=None, extractor=None, **kwargs):
-		if generator is None:
-			generator = self.generator
-		if extractor is None:
-			extractor = self.extractor
-		info = super().create_results_container(**kwargs)
-		info.generator = generator
-		info.extractor = extractor
-		return info
-	
-	
-	@staticmethod
-	def _generate_step(info, *, real=None, generated_key='generated'):
-		info[generated_key] = info.generator.generate(info.batch.size, gen=info.gen)
-		return info
-	
-	
-	@staticmethod
-	def _judge_step(info, *, observation=None, generated=None, real_key='real', fake_key='fake'):
-		if observation is None:
-			observation = info['observation']
+	@agnosticmethod
+	def _judge_step(self, info, *, observation=None, generated=None):
 		if generated is None:
-			generated = info['generated']
+			generated = info[self.generated_key]
+		if observation is None:
+			observation = info[self.observation_key]
 
-		info[fake_key] = generated if info.extractor is None else info.extractor.encode(generated)
-		info[real_key] = observation if info.extractor is None else info.extractor.encode(observation)
-
-		info.accumulate_fake(info[fake_key])
-		info.accumulate_real(info[real_key])
+		info[self.fake_key] = generated if info.extractor is None else info.extractor.encode(generated)
+		info[self.real_key] = observation if info.extractor is None else info.extractor.encode(observation)
 		return info
 
 
-	@classmethod
-	def aggregate(cls, info):
+	@agnosticmethod
+	def heavy_results(self):
+		return {self.fake_features_key, self.real_features_key, *super().heavy_results()}
+
+
+	@agnosticmethod
+	def aggregate(self, info):
 		info = super().aggregate(info)
-		
-		info['fake_features'] = info.aggregate_fake()
-		info['real_features'] = info.aggregate_real()
-		
-		cls._feature_criterion_step(info, info['fake_features'], info['real_features'])
-		
-		if info.slim:
-			del info['fake_features']
-			del info['real_features']
+		info[self.fake_features_key] = info.aggregate(self.fake_key)
+		info[self.real_features_key] = info.aggregate(self.real_key)
+		self._compare_features(info)
 		return info
 
 
 	@staticmethod
-	def _feature_criterion_step(info, fake, real):
+	def _compare_features(info, *, fake=None, real=None):
 		raise NotImplementedError
 
 

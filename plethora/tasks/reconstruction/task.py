@@ -1,5 +1,6 @@
 import torch
-from omnibelt import get_printer
+from omnibelt import get_printer, agnosticmethod
+from ...framework import with_hparams, with_modules, models
 from ..base import Task, BatchedTask, SimpleEvaluationTask
 
 prt = get_printer(__file__)
@@ -7,13 +8,14 @@ prt = get_printer(__file__)
 
 
 class AbstractReconstructionTask(SimpleEvaluationTask):
-	@classmethod
-	def _eval_step(cls, info, *, comparison_key='comparison'):
-		cls._encode_step(info)
-		cls._decode_step(info)
-		cls._compare_step(info, comparison_key=comparison_key)
+	@agnosticmethod
+	def run_step(self, info):
+		self._encode_step(info)
+		self._decode_step(info)
+		self._compare_step(info)
 		return info
 
+	observation_key = 'observation'
 
 	@staticmethod
 	def _encode_step(info):
@@ -26,64 +28,40 @@ class AbstractReconstructionTask(SimpleEvaluationTask):
 
 	
 	@staticmethod
-	def _compare_step(info, *, comparison_key='comparison'):
+	def _compare_step(info):
 		raise NotImplementedError
 
 
 
+@with_modules(encoder=models.Encoder, required=False)
+@with_modules(decoder=models.Decoder, criterion=models.Criterion, required=True)
 class ReconstructionTask(AbstractReconstructionTask):
-	def __init__(self, encoder=None, decoder=None, criterion=None, **kwargs):
-		super().__init__(**kwargs)
-		self.encoder = encoder
-		self.decoder = decoder
-		self.criterion = criterion
+	latent_key = 'latent'
+	reconstruction_key = 'reconstruction'
 
-
-	def prepare(self, encoder=None, decoder=None, criterion=None, **kwargs):
-		if encoder is None:
-			encoder = self.encoder
-		if decoder is None:
-			decoder = self.decoder
-		if criterion is None:
-			criterion = self.criterion
-		
-		if encoder is None:
-			prt.warning('No encoder provided') # TODO: check required and fill in defaults
-		if decoder is None:
-			prt.warning('No decoder provided')
-		if criterion is None:
-			prt.warning('No criterion provided')
-		
-		info = super().prepare(**kwargs)
-		info.encoder = encoder
-		info.decoder = decoder
-		info.criterion = criterion
+	@agnosticmethod
+	def _encode_step(self, info, *, observation=None):
+		if observation is None:
+			observation = info[self.observation_key]
+		info[self.latent_key] = observation if info.encoder is None else info.encoder.encode(observation)
 		return info
 
-	
-	@staticmethod
-	def _encode_step(info, *, original=None, code_key='code'):
+
+	@agnosticmethod
+	def _decode_step(self, info, *, latent=None):
+		if latent is None:
+			latent = info[self.latent_key]
+		info[self.reconstruction_key] = info.decoder.decode(latent)
+		return info
+
+
+	@agnosticmethod
+	def _compare_step(self, info, *, original=None, reconstruction=None):
 		if original is None:
-			original = info['observation']
-		info[code_key] = original if info.encoder is None else info.encoder.encode(original)
-		return info
-
-
-	@staticmethod
-	def _decode_step(info, *, code=None, reconstruction_key='reconstruction'):
-		if code is None:
-			code = info['code']
-		info[reconstruction_key] = info.decoder.decode(code)
-		return info
-
-
-	@staticmethod
-	def _compare_step(info, *, original=None, reconstruction=None, comparison_key='comparison'):
-		if original is None:
-			original = info['observation']
+			original = info[self.observation_key]
 		if reconstruction is None:
-			reconstruction = info['reconstruction']
-		info[comparison_key] = info.criterion.compare(reconstruction, original)
+			reconstruction = info[self.reconstruction_key]
+		info[info.evaluation_key] = info.criterion.compare(reconstruction, original)
 		return info
 
 

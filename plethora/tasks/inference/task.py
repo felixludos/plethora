@@ -1,6 +1,7 @@
 from omnibelt import get_printer, unspecified_argument, agnosticmethod
 
 from ...framework.util import spaces
+from ...framework import with_hparams, with_modules, models, with_args
 from ..base import Task, BatchedTask, SimpleEvaluationTask
 from ...datasets.base import EncodableDataset, BufferView, SupervisedDataset
 
@@ -10,11 +11,8 @@ prt = get_printer(__file__)
 
 
 
+@with_modules(encoder=models.Encoder)
 class DownstreamTask(Task):
-	def __init__(self, encoder=None, **kwargs):
-		super().__init__(**kwargs)
-		self.encoder = encoder
-
 
 	ObservationBuffer = EncodableDataset.EncodedBuffer
 	def _wrap_dataset(self, dataset, encoder=None):
@@ -37,11 +35,6 @@ class DownstreamTask(Task):
 
 
 	class ResultsContainer(Task.ResultsContainer):
-		def __init__(self, encoder=None, **kwargs):
-			super().__init__(**kwargs)
-			self.encoder = encoder
-
-
 		@property
 		def encoder(self):
 			return self._encoder
@@ -55,36 +48,25 @@ class DownstreamTask(Task):
 
 
 
+@with_args(eval_split=0.2)
+@with_modules(builder=models.ModelBuilder, required=False)
 class InferenceTask(DownstreamTask):
-	eval_split = 0.2
-
-	def __init__(self, eval_split=unspecified_argument, **kwargs):
-		super().__init__(**kwargs)
-		if eval_split is unspecified_argument:
-			self.eval_split = eval_split
-
-	
 	class ResultsContainer(DownstreamTask.ResultsContainer):
-		def __init__(self, builder=None, **kwargs):
-			super().__init__(**kwargs)
-			self.builder = builder
-
-
 		@property
 		def din(self):
 			return self.source.observation_space
-
-
 		@property
 		def dout(self):
 			return self.source.target_space
 
 
-	def create_results_container(self, eval_split=unspecified_argument, **kwargs):
-		if eval_split is unspecified_argument:
-			eval_split = self.eval_split
-		info = super().create_results_container(**kwargs)
-		self._prepare_source(info, eval_split=eval_split)
+	EstimatorBuilder = GradientBoostingBuilder # default builder using gradient boosting trees
+	@agnosticmethod
+	def create_results_container(self, builder=None, **kwargs):
+		if builder is None:
+			builder = self.EstimatorBuilder()
+		info = super().create_results_container(builder=builder, **kwargs)
+		self._prepare_source(info)
 		self._prepare_estimator(info)
 		return info
 	
@@ -97,21 +79,18 @@ class InferenceTask(DownstreamTask):
 
 
 	@staticmethod
-	def _prepare_source(info, eval_split=None, shuffle=True):
-		info.train_dataset, info.eval_dataset = info.source.split([None, eval_split],
+	def _prepare_source(info, *, shuffle=True):
+		info.train_dataset, info.eval_dataset = info.source.split([None, info.eval_split],
 		                                                          shuffle=shuffle, register_modes=False)
 		return info
 
 
-	EstimatorBuilder = GradientBoostingBuilder # default builder using gradient boosting trees
-	@agnosticmethod
-	def _prepare_estimator(self, info, *, builder=None, source=None, **kwargs):
+	@staticmethod
+	def _prepare_estimator(info, *, builder=None, source=None, **kwargs):
 		if source is None:
 			source = info.source
 		if builder is None:
 			builder = info.builder
-		if builder is None:
-			builder = self.EstimatorBuilder()
 		info.estimator = builder(source=source, **kwargs)
 		return info
 

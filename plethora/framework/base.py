@@ -220,7 +220,8 @@ class Container(Device, OrderedDict):
 
 	def __getitem__(self, item):
 		if item not in self:
-			return self._find_missing(item)
+			val = self._find_missing(item)
+			self[item] = val
 		return super().__getitem__(item)
 
 

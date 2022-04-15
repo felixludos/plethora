@@ -1,8 +1,9 @@
 
 
 import torch
-from omnibelt import agnosticmethod, mix_into
-from .features import Seeded
+from omnibelt import agnosticmethod, unspecified_argument#, mix_into
+from .features import Seeded, RegisteredArguments, with_args
+from .hyperparameters import Parametrized, ModuleParametrized, with_modules
 from .base import Function, Container
 
 
@@ -37,20 +38,14 @@ class ModelBuilder:
 
 
 
-class Resultable:
-	score_key = None
+@with_args(score_key=None)
+class Resultable(RegisteredArguments):
+	@with_args(source=None)
+	class ResultsContainer(Seeded, RegisteredArguments, Container):
 
-	def __init__(self, *args, score_key=None, **kwargs):
-		super().__init__(*args, **kwargs)
-		if score_key is None:
-			self.score_key = score_key
-
-
-	class ResultsContainer(Seeded, Container):
-		def __init__(self, source=None, score_key=None, **kwargs):
-			super().__init__(**kwargs)
+		def new_source(self, source):
+			self.clear()
 			self.source = source
-			self._score_key = score_key
 
 
 		class NoScoreKeyError(Exception):
@@ -67,7 +62,7 @@ class Resultable:
 
 		def _find_missing(self, key, **kwargs):
 			if key == 'score':
-				if self._score_key is None:
+				if self.score_key is None:
 					raise self.NoScoreKeyError
 				return self[self._score_key]
 			if self.source is not None:
@@ -80,22 +75,29 @@ class Resultable:
 			return super().__contains__(item) or (item == 'score' and super().__contains__(self._score_key))
 
 
-	@classmethod
-	def _integrate_results(cls, info, **kwargs):
+	@agnosticmethod
+	def _fill_in_defaults(self, defaults, default_value=unspecified_argument):
+		defaults = {key: val for key, val in defaults.items() if val is not unspecified_argument}
+		kwargs = dict(self.iterate_args(items=True, default_value=default_value))
+		args = set(kwargs.keys())
+		kwargs.update(defaults)
+		return args, kwargs
+
+
+	@agnosticmethod
+	def _integrate_results(self, info, **kwargs):
 		raise NotImplementedError # TODO
-		if not isinstance(info, cls.ResultsContainer):
-			new = mix_into(cls.ResultsContainer, info)
+		if not isinstance(info, self.ResultsContainer):
+			new = mix_into(self.ResultsContainer, info)
 		# TODO: run __init__ of new super classes with **kwargs
 		return new
 
 
 	@agnosticmethod
-	def create_results_container(self, info=None, score_key=None, **kwargs):
-		if score_key is None:
-			score_key = self.score_key
+	def create_results_container(self, info=None, **kwargs):
 		if info is not None:
-			return self._integrate_results(info, score_key=score_key, **kwargs)
-		return self.ResultsContainer(score_key=score_key, **kwargs)
+			return self._integrate_results(info, **kwargs)
+		return self.ResultsContainer(**kwargs)
 
 
 
@@ -128,10 +130,17 @@ class Buildable:
 
 
 
-class Computable(Resultable):
+class Computable(Parametrized, Resultable):
+	@agnosticmethod
+	def register_hparam(self, name, default=None, **kwargs):
+		self.register_arg(name)
+		return super().register_hparam(name=name, default=default, **kwargs)
+
+
 	@agnosticmethod
 	def compute(self, source=None, **kwargs):
-		info = self.create_results_container(source=source, **kwargs)
+		registered_args, kwargs = self._fill_in_defaults(kwargs)
+		info = self.create_results_container(source=source, _registered_args=registered_args, **kwargs)
 		return self._compute(info)
 
 
@@ -141,7 +150,18 @@ class Computable(Resultable):
 
 
 
-class Model(Resultable, Buildable):
+class Fitable(Resultable):
+	def fit(self, source, **kwargs):
+		raise NotImplementedError
+
+
+	def evaluate(self, source, **kwargs):
+		raise NotImplementedError
+
+
+
+class Model(Parametrized, Fitable, Buildable):
+
 	@agnosticmethod
 	def create_fit_results_container(self, **kwrags):
 		return self.create_results_container(**kwargs)
@@ -168,24 +188,84 @@ class Model(Resultable, Buildable):
 
 
 
-class IterativeModel(Model):
-	@classmethod
-	def create_step_results_container(cls, **kwargs):
-		return cls.create_results_container(**kwargs)
+@with_modules(model=None)
+class Trainer(ModuleParametrized, Fitable):
+	def __init__(self, model, source=None, **kwargs):
+		super().__init__(**kwargs)
+		self.source = source
+		self.model = model
+
+		self.N_iter = 0
+		self.N_samples = 0
 
 
-	def fit(self, source, info=None, **kwargs):
-		# TODO: load default trainer and optimize (wrap this loop with the trainer)
-		for batch in source.get_iterator():
-			out = self.step(source, info=info, **kwargs)
-		return out
+	def loop(self, source, **kwargs):
+		itr = source.get_iterator(**kwargs)
+		for batch in itr:
+			yield batch
+			self.N_iter += 1
+			self.N_samples += batch.size
 
 
-	def step(self, source, info=None, **kwargs):
-		info = self.create_step_results_container(info=info, **kwargs)
+	@agnosticmethod
+	def create_step_results_container(self, **kwargs):
+		return self.model.create_step_results_container(**kwargs)
+
+
+	def fit(self, source=None, **kwargs):
+		if source is None:
+			source = self.source
+		for batch in self.loop(source, **kwargs):
+			info = self.step(batch)
+		return self.finish_fit(info)
+
+
+	def evaluate(self, source=None, **kwargs):
+		if source is None:
+			source = self.source
+		info = self.model.evaluate(source, **kwargs)
+		return self.finish_evaluate(info)
+
+
+	def step(self, source, **kwargs):
+		info = self.create_step_results_container(source=source, **kwargs)
 		return self._step(info)
 
 
+	def _step(self, info, **kwargs):
+		return self.model.step(info)
+
+
+	def finish_fit(self, info):
+		return info
+
+
+	def finish_evaluate(self, info):
+		return info
+
+
+
+class TrainableModel(Model):
+	@agnosticmethod
+	def create_step_results_container(self, **kwargs):
+		return self.create_results_container(**kwargs)
+
+
+	Trainer = Trainer
+	@agnosticmethod
+	def fit(self, source, info=None, **kwargs):
+		assert info is None, 'cant merge info'
+		trainer = self.Trainer(self)
+		return trainer.fit(source=source, **kwargs)
+
+
+	@agnosticmethod
+	def step(self, info, **kwargs):
+		self._step(info, **kwargs)
+		return info
+
+
+	@agnosticmethod
 	def _step(self, info):
 		raise NotImplementedError
 
@@ -196,59 +276,69 @@ class IterativeModel(Model):
 
 
 class Extractor(Function):
+	@agnosticmethod
 	def extract(self, observation):
 		return self(observation)
 
 
 
 class Encoder(Extractor):
+	@agnosticmethod
 	def encode(self, observation):
 		return self.extract(observation)
 
 
 
 class Decoder(Function):
+	@agnosticmethod
 	def decode(self, latent):
 		return self(latent)
 
 
 
 class Generator(Function):
+	@agnosticmethod
 	def generate(self, N: int, gen=None):
 		raise NotImplementedError
 
 
 
 class Discriminator(Function):
+	@agnosticmethod
 	def judge(self, observation):
 		raise NotImplementedError
 
 
 
 class Criterion(Function):
+	@agnosticmethod
 	def compare(self, observation1, observation2):
 		raise NotImplementedError
 
 
 
 class Metric(Criterion):
+	@agnosticmethod
 	def distance(self, observation1, observation2):
 		raise NotImplementedError
 
 
+	@agnosticmethod
 	def compare(self, observation1, observation2):
 		return self.distance(observation1, observation2)
 
 
 
 class Score(Function):
+	@agnosticmethod
 	def score(self, observation):
 		raise NotImplementedError
 
 
 
 class Interpolator(Function):
-	def interpolate(self, start, end, N):
+	@staticmethod
+	def interpolate(start, end, N):
 		start, end = start.unsqueeze(1), end.unsqueeze(1)
 		progress = torch.linspace(0., 1., steps=N+2, device=start.device).view(1, N+2, *[1] * len(start.shape[2:]))
 		return start + (end - start) * progress
@@ -256,32 +346,38 @@ class Interpolator(Function):
 
 
 class Estimator(Function):
+	@agnosticmethod
 	def predict(self, observation):
 		raise NotImplementedError
 
 
 
 class Quantizer(Function):
+	@agnosticmethod
 	def quantize(self, observation):
 		raise NotImplementedError
 
 
+	@agnosticmethod
 	def unquantize(self, observation):
 		raise NotImplementedError
 
 
 
 class Compressor(Function):
-	def compress(self, observation):
+	@staticmethod
+	def compress(observation):
 		raise NotImplementedError
 
 
-	def uncompress(self, data):
+	@staticmethod
+	def decompress(data):
 		raise NotImplementedError
 
 
 
 class PathCriterion(Criterion):
+	@agnosticmethod
 	def compare_path(self, path1, path2):
 		raise NotImplementedError
 
