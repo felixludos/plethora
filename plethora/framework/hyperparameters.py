@@ -1,4 +1,8 @@
+import inspect
+
 from omnibelt import get_printer, unspecified_argument, agnosticmethod
+
+from .util import spaces
 
 prt = get_printer(__file__)
 
@@ -6,7 +10,7 @@ prt = get_printer(__file__)
 
 class Hyperparameter(property):
 	def __init__(self, name=None, fget=None, default=None, required=False,
-	             strict=False, cache=False, **kwargs):
+	             strict=False, cache=False, space=None, **kwargs):
 		super().__init__(fget=fget, **kwargs)
 		if name is None:
 			assert fget is not None, 'No name provided'
@@ -15,8 +19,15 @@ class Hyperparameter(property):
 		self.value = self._missing
 		self.default = default
 		self.cache = cache
+		if space is not None and isinstance(space, (list, tuple, set)):
+			space = spaces.CategoricalDim(space)
+		self.space = space
 		self.required = required
 		self.strict = strict # raises and error if an invalid value is set
+
+
+	def copy(self):
+		raise NotImplementedError # TODO
 
 
 	class _missing(Exception):
@@ -36,6 +47,10 @@ class Hyperparameter(property):
 			self.value = value
 
 
+	def reset(self):
+		self.value = self._missing
+
+
 	def __str__(self):
 		try:
 			value = self.get_value()
@@ -52,7 +67,10 @@ class Hyperparameter(property):
 		if self.value is not self._missing:
 			return self.value
 		if obj is not None:
-			value = super().__get__(obj, cls)
+			try:
+				value = super().__get__(obj, cls)
+			except Hyperparameter.MissingHyperparameter:
+				raise self.MissingHyperparameter(self.name)
 			if self.cache:
 				self.value = value
 			return value
@@ -62,7 +80,8 @@ class Hyperparameter(property):
 
 
 	def validate_value(self, value):
-		pass
+		if self.space is not None:
+			self.space.validate(value)
 
 
 	def update_value(self, value, obj=None):
@@ -88,8 +107,17 @@ class Hyperparameter(property):
 class Parametrized:
 	Hyperparameter = Hyperparameter
 	@agnosticmethod
-	def register_hparam(self, name=None, fget=None, default=unspecified_argument, required=False):
-		return self.Hyperparameter(fget=fget, required=required, default=default, name=name)
+	def register_hparam(self, name=None, fget=None, default=unspecified_argument, required=False, **kwargs):
+		return self.Hyperparameter(fget=fget, required=required, default=default, name=name, **kwargs)
+
+
+	RequiredHyperparameter = Hyperparameter.MissingHyperparameter
+
+
+	@agnosticmethod
+	def reset_hparams(self):
+		for key, param in self.iterate_hparams(True):
+			param.reset()
 
 
 	@agnosticmethod
@@ -102,14 +130,14 @@ class Parametrized:
 
 
 	@agnosticmethod
-	def inherit_hparams(self, *names, copy_hparams=False, strict=False):
+	def inherit_hparams(self, *names, copy=False, strict=False):
 		for name in names:
-			hparam = getattr(self, name, unspecified_argument)
+			hparam = inspect.getattr_static(self, name, unspecified_argument)
 			if hparam is unspecified_argument:
 				if strict:
 					raise self.Hyperparameter.MissingHyperparameter(name)
 			else:
-				if copy_hparams:
+				if copy:
 					hparam = hparam.copy()
 				setattr(self, name, hparam)
 
@@ -117,8 +145,8 @@ class Parametrized:
 
 class ModuleParametrized(Parametrized):
 	class Hyperparameter(Parametrized.Hyperparameter):
-		def __init__(self, default=None, required=True, module=None, **kwargs):
-			super().__init__(default=default, required=required, **kwargs)
+		def __init__(self, default=None, required=True, module=None, cache=False, **kwargs):
+			super().__init__(default=default, required=required, cache=cache or module is not None, **kwargs)
 			self.module = module
 
 
@@ -151,7 +179,10 @@ class inherit_hparams:
 
 
 class hparam:
-	def __init__(self, **kwargs):
+	def __init__(self, default=unspecified_argument, space=None, name=None, **kwargs):
+		self.default = default
+		self.name = name
+		self.space = space
 		self.kwargs = kwargs
 
 
@@ -159,9 +190,17 @@ class hparam:
 		self.fn = fn
 
 
+	def __get__(self, instance, owner): # TODO: this is just for linting, right?
+		return getattr(instance, self.name)
+
+
 	def __set_name__(self, obj, name):
+		if self.default is not unspecified_argument:
+			self.kwargs['default'] = self.default
+		self.kwargs['space'] = self.space
 		self.kwargs['fget'] = self.fn
-		setattr(obj, name, obj.register_hparam(**self.kwargs))
+		self.name = name
+		setattr(obj, name, obj.register_hparam(name, **self.kwargs))
 
 
 

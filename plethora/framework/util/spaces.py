@@ -28,79 +28,109 @@ class DimSpec(Packable):
 		self.min = min
 		self.max = max
 		self.dtype = dtype
-	
+
+
 	def __str__(self):
 		return f'{self.__class__.__name__}'
-	
+
+
 	def __repr__(self):
 		return str(self)
-	
+
+
 	def compress(self, vals):
 		return vals
-	
+
+
 	def expand(self, vals):
 		return vals
+
+
+	class InvalidValue(ValueError):
+		pass
+
+
+	def validate(self, value):
+		if not isinstance(value, (int, float)):
+			raise NotImplementedError
+		if self.min is not None and value < self.min:
+			raise self.InvalidValue(value)
+		if self.max is not None and value > self.max:
+			raise self.InvalidValue(value)
+
 
 	@property
 	def dof(self):
 		return len(self)
 
+
 	@property
 	def shape(self):
 		return self._shape
+
 
 	@property
 	def expanded_shape(self):
 		return self.shape
 
+
 	def __len__(self):  # compressed shape
 		return math.prod(self.shape)
+
 
 	def expanded_len(self):
 		return math.prod(self.expanded_shape)
 
+
 	def sample(self, N=None, gen=None, seed=None):  # samples compressed
 		raise NotImplementedError
-	
+
+
 	@property
 	def min(self):
 		return self._min
 	@min.setter
 	def min(self, val):
 		self._min = val if val is None else torch.as_tensor(val)
-	
+
+
 	@property
 	def max(self):
 		return self._max
 	@max.setter
 	def max(self, val):
 		self._max = val if val is None else torch.as_tensor(val)
-	
+
+
 	@property
 	def range(self):
 		return self.max - self.min
-	
+
+
 	def transform(self, vals, spec):
 		return self.unstandardize(spec.standardize(vals))
-	
+
+
 	def difference(self, x, y, standardize=False):  # x-y
 		x = self.standardize(x)
 		y = self.standardize(y)
 		return x - y
-	
+
+
 	def distance(self, x, y, standardize=False):
 		return math.sqrt(sum(self.difference(x, y, standardize=standardize)**2))
-	
+
+
 	def standardize(self, vals):
 		raise NotImplementedError
-	
+
+
 	def unstandardize(self, vals):
 		raise NotImplementedError
 
 
 
 class ContinuousDim(DimSpec):
-	
 	def sample(self, N=None, gen=None, seed=None):
 		
 		if seed is not None:
@@ -115,9 +145,11 @@ class ContinuousDim(DimSpec):
 		
 		samples = self.unstandardize(self._sample((N, *self.shape), gen))
 		return samples.squeeze(0) if sqz else samples
-	
+
+
 	def _sample(self, shape, generator):
 		return torch.randn(*shape, generator=generator)
+
 
 
 class HalfBoundDim(ContinuousDim):
@@ -140,11 +172,13 @@ class HalfBoundDim(ContinuousDim):
 		
 		self._bound_type = bound_type
 		self._epsilon = epsilon
-	
+
+
 	def __str__(self):
 		lim = f'min={self.min.mean().item():.3g}' if self.min is not None else f'max={self.max.mean().item():.3g}'
 		return f'HalfBound({lim})'
-	
+
+
 	def standardize(self, vals):
 		if self.min is not None:
 			vals = vals - self.min.unsqueeze(0)
@@ -160,7 +194,8 @@ class HalfBoundDim(ContinuousDim):
 			vals = vals.log()
 		
 		return vals
-	
+
+
 	def unstandardize(self, vals):
 		if self._bound_type == 'soft':
 			vals = F.softplus(vals)
@@ -179,6 +214,7 @@ class HalfBoundDim(ContinuousDim):
 		return vals
 
 
+
 class BoundDim(ContinuousDim):
 	def __init__(self, min=0., max=1., epsilon=1e-10, **kwargs):
 		super().__init__(min=min, max=max, **kwargs)
@@ -186,37 +222,47 @@ class BoundDim(ContinuousDim):
 		assert self.max is not None, f'No upper bound provided'
 		
 		self._epsilon = epsilon
-	
+
+
 	def __str__(self):
 		return f'Bound(min={self.min.mean().item():.3g}, max={self.max.mean().item():.3g})'
-	
+
+
 	def _sample(self, shape, generator):
 		return torch.rand(*shape, generator=generator)
-	
+
+
 	def standardize(self, vals):
 		return vals.sub(self.min.unsqueeze(0)).div(self.range.unsqueeze(0)) \
 			.clamp(min=self._epsilon, max=1 - self._epsilon)
-	
+
+
 	def unstandardize(self, vals):
 		return vals.clamp(min=self._epsilon, max=1 - self._epsilon) \
 			.mul(self.range.unsqueeze(0)).add(self.min.unsqueeze(0))
-	
+
+
 	def difference(self, x, y, standardize=False):
 		return super().difference(x, y, standardize=standardize) * (self.range.unsqueeze(0) ** float(not standardize))
+
 
 
 class UnboundDim(ContinuousDim):
 	def __init__(self, min=None, max=None, **kwargs):
 		super().__init__(min=None, max=None, **kwargs)
-	
+
+
 	def __str__(self):
 		return 'Unbound()'
-	
+
+
 	def standardize(self, vals):
 		return vals
-	
+
+
 	def unstandardize(self, vals):
 		return vals
+
 
 
 class PeriodicDim(BoundDim):
@@ -225,29 +271,36 @@ class PeriodicDim(BoundDim):
 		if max is None:
 			max = min + period
 		super().__init__(min=min, max=max, **kwargs)
-	
+
+
 	def __str__(self):
 		return f'Periodic({self.period.mean().item():.3g})'
-	
+
+
 	@property
 	def period(self):
 		return self.range
-	
+
+
 	@property
 	def expanded_shape(self):
 		return (*self.shape, 2)
-	
+
+
 	def expand(self, vals):
 		thetas = self.standardize(vals).mul(2*np.pi)
 		return torch.stack([thetas.cos(), thetas.sin()], -1)
-	
+
+
 	def compress(self, vals):
 		vals = vals.view(-1, *self.expanded_shape)
 		return self.unstandardize(torch.atan2(vals[..., 1], vals[..., 0]).div(2 * np.pi))
-	
+
+
 	def difference(self, x, y, standardize=False):
 		return angle_diff(self.standardize(x), self.standardize(y), period=1.) * (self.period ** float(not standardize))
-	
+
+
 	def transform(self, vals, spec):
 		if isinstance(spec, CategoricalDim):
 			spec.n += 1
@@ -257,12 +310,13 @@ class PeriodicDim(BoundDim):
 		return out
 
 
+
 class MultiDimSpace(DimSpec):
 	pass
 
 
+
 class SimplexSpace(MultiDimSpace, BoundDim):
-	
 	def sample(self, N=None, **kwargs):  # from Donald B. Rubin, The Bayesian bootstrap Ann. Statist. 9, 1981, 130-134.
 		# discussed in https://cs.stackexchange.com/questions/3227/uniform-sampling-from-a-simplex
 		
@@ -283,32 +337,39 @@ class SimplexSpace(MultiDimSpace, BoundDim):
 		
 		samples = edges.narrow(dim, 1, self.channels) - edges.narrow(dim, 0, self.channels)
 		return samples.squeeze(0) if sqz else samples
-	
+
+
 	def standardize(self, vals):
 		return F.normalize(vals, p=1, dim=(-1) ** (not self.channel_first))
-	
+
+
 	def unstandardize(self, vals):
 		return self.standardize(vals)
 
 
+
 class SphericalSpace(MultiDimSpace, UnboundDim):
-	
 	def standardize(self, vals):
 		return F.normalize(vals, p=2,
 		                   dim=(-1) ** (not self.channel_first),  # 1 or -1
 		                   )
-	
+
+
 	def unstandardize(self, vals):
 		return self.standardize(vals)
-	
+
+
 	def euclidean_difference(self, x, y, standardize=False):
 		return super().difference(x, y, standardize=False)
-	
+
+
 	def geodesic_difference(self, x, y, standardize=False):
 		raise NotImplementedError
-	
+
+
 	def difference(self, x, y, standardize=False):  # geodesic by default
 		return self.geodesic_difference(x, y, standardize=False)
+
 
 
 class SpatialSpace(MultiDimSpace):
@@ -327,6 +388,7 @@ class SpatialSpace(MultiDimSpace):
 		self.channels = channels
 
 
+
 class SequenceSpace(SpatialSpace):
 	def __init__(self, channels=1, length=None, **kwargs):
 		super().__init__(channels=channels, shape=(length,), **kwargs)
@@ -335,6 +397,7 @@ class SequenceSpace(SpatialSpace):
 	
 	def __str__(self):
 		return f'Sequence(C={self.channels}, K={self.length})'
+
 
 
 class ImageSpace(SpatialSpace):
@@ -346,7 +409,8 @@ class ImageSpace(SpatialSpace):
 
 	def __str__(self):
 		return f'Image(C={self.channels}, H={self.height}, W={self.width})'
-	
+
+
 
 class PixelSpace(ImageSpace, BoundDim):
 	def __init__(self, channels=1, height=None, width=None, as_bytes=True, min=None, max=None, **kwargs):
@@ -354,6 +418,7 @@ class PixelSpace(ImageSpace, BoundDim):
 		dtype = 'byte' if as_bytes else 'float'
 		super().__init__(channels=channels, height=height, width=width, min=min, max=max, dtype=dtype, **kwargs)
 		self.as_bytes = as_bytes
+
 
 
 class VolumeSpace(SpatialSpace):
@@ -371,7 +436,9 @@ class VolumeSpace(SpatialSpace):
 
 class CategoricalDim(DimSpec):
 	def __init__(self, n, **kwargs):
-		if isinstance(n, (list, tuple)):
+		if isinstance(n, (list, tuple, set)):
+			if isinstance(n, set):
+				n = list(n)
 			n, values = len(n), n
 		else:
 			assert isinstance(n, int), f'bad: {n}'
@@ -381,20 +448,31 @@ class CategoricalDim(DimSpec):
 		self._max = self._max.long()
 		self.n = n
 		self.values = values
-	
+
+
+	def validate(self, value):
+		if value in self.values:
+			return
+		return super().validate(value)
+
+
 	def __str__(self):
 		return f'Categorical({self.n})'
-	
+
+
 	def standardize(self, vals):
 		return vals / (self.n - 1)
-	
+
+
 	def unstandardize(self, vals):
 		return (vals * self.n).long().clamp(max=self.n - 1)
-	
+
+
 	@property
 	def expanded_shape(self):
 		return (*self.shape, self.n)
-	
+
+
 	def sample(self, N=None, gen=None, seed=None):
 		if seed is not None:
 			gen = torch.Generator()
@@ -409,23 +487,29 @@ class CategoricalDim(DimSpec):
 		samples = torch.randint(self.n, size=(N, *self.shape), generator=gen)
 		
 		return samples.squeeze(0) if sqz else samples
-	
+
+
 	def expand(self, vals):
 		return F.one_hot(vals.long(), self.n)
-	
+
+
 	def compress(self, vals):
 		return vals.argmax(-1)
-	
+
+
 	def difference(self, x, y, standardize=False):
 		return x.sub(y).bool().long()
+
 
 
 class BinaryDim(CategoricalDim):
 	def __init__(self, n=None, **kwargs):
 		super().__init__(n=2, **kwargs)
-	
+
+
 	def __str__(self):
 		return f'Binary()'
+
 
 
 class JointSpace(DimSpec):
@@ -454,14 +538,17 @@ class JointSpace(DimSpec):
 		self._dim_indices = np.cumsum([0] + [len(dim) for dim in self.dims]).tolist()
 		self._dim_expanded_indices = np.cumsum([0] + [dim.expanded_len() for dim in self.dims]).tolist()
 		self._is_dense = any(1 for dim in dims if isinstance(dim, ContinuousDim))
-	
+
+
 	def __str__(self):
 		contents = ', '.join(str(x) for x in self.dims)
 		return f'Joint({contents})'
-	
+
+
 	def __iter__(self):
 		return iter(self.dims)
-	
+
+
 	@property
 	def expanded_shape(self):
 		return self._expanded_shape
@@ -494,25 +581,32 @@ class JointSpace(DimSpec):
 			idx += D
 		
 		return torch.cat(outs, -1)
-	
+
+
 	def standardize(self, vals):
 		return self._dispatch('standardize', vals)
-	
+
+
 	def unstandardize(self, vals):
 		return self._dispatch('unstandardize', vals)
-	
+
+
 	def expand(self, vals):
 		return self._dispatch('expand', vals)
-	
+
+
 	def compress(self, vals):
 		return self._dispatch('compress', vals, use_expanded=True)
-	
+
+
 	def sample(self, N=None, gen=None, seed=None):
 		return self._dispatch('sample', N=N, gen=gen, seed=seed)
-	
+
+
 	def difference(self, x, y, standardize=False):
 		return self._dispatch('difference', x, y, standardize=standardize)
-	
+
+
 	def __getitem__(self, item):
 		return self.dims[item]
 

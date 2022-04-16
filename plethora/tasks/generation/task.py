@@ -1,86 +1,69 @@
 import torch
 from omnibelt import get_printer, unspecified_argument, agnosticmethod
-from ...framework import util#, with_hparams, with_modules, models, with_args
+from ...framework import models, hparam, inherit_hparams, data_args
 from ..base import Task, BatchedTask, SimpleEvaluationTask, Cumulative
 
 prt = get_printer(__file__)
 
 
-class auto_args:
-	def __init__(self, _out_key=None, **args):
-		self._out_key = None
-		self.args = args
 
-
-	def __call__(self, *args, **kwargs):
-		
-		pass
-
-
-	# def __get__(self, instance, owner):
-	# 	pass
-
-
-@with_modules(generator=models.Generator)
 class AbstractGenerationTask(BatchedTask):
-	generated_key = 'generated'
+	generator = hparam(module=models.Generator)
+
 
 	@agnosticmethod
 	def run_step(self, info):
-		info.clear()
-		self._generate_step(info)
-		self._judge_step(info)
+		self._generate_step(info=info)
+		self._judge_step(info=info)
 		return info
 
 
-	@auto_args('eval', observation='observation')
-	@auto_attrs('eval', observation='observation')
-	def judge(self, observation=None):
+	@data_args('generated')
+	def _generate_step(self, info):
+		return self.generator.generate(info.batch.size, gen=info.gen)
+
+	# @agnosticmethod
+	# def _generate_step(self, info):
+	# 	info['generated'] = self.generator.generate(info.batch.size, gen=info.gen)
+	# 	return info
 
 
 	@agnosticmethod
-	def _generate_step(self, info):
-		info[self.generated_key] = info.generator.generate(info.batch.size, gen=info.gen)
-		return info
-
-
-	@staticmethod
-	def _judge_step(info):
+	def _judge_step(self, info):
 		raise NotImplementedError
 
 
 
-@with_modules(discriminator=models.Discriminator)
+@inherit_hparams('generator')
 class DiscriminatorGenerationTask(SimpleEvaluationTask, AbstractGenerationTask):
+	discriminator = hparam(module=models.Discriminator)
 
-	@agnosticmethod
-	def _judge_step(self, info, *, generated=None):
-		if generated is None:
-			generated = info[self.generated_key]
-		info[info.evaluation_key] = info.discriminator.judge(generated)
-		return info
+	@data_args('scores', samples='generated')
+	def _judge_step(self, samples):
+		return self.discriminator.judge(samples)
+
+	# @agnosticmethod
+	# def _judge_step(self, info):
+	# 	info['scores'] = self.discriminator.judge(info['generated'])
+	# 	return info
 
 
-
-@with_modules(extractor=models.Extractor, required=False)
-class AbstractFeatureGenerationTask(AbstractGenerationTask):
-	observation_key = 'observation'
-
+@inherit_hparams('generator')
+class FeatureGenerationTask(AbstractGenerationTask):
 	fake_key = 'fake'
 	real_key = 'real'
 	fake_features_key = 'fake_features'
 	real_features_key = 'real_features'
 
 
-	@agnosticmethod
-	def _judge_step(self, info, *, observation=None, generated=None):
-		if generated is None:
-			generated = info[self.generated_key]
-		if observation is None:
-			observation = info[self.observation_key]
+	feature_criterion = hparam()
+	extractor = hparam(module=models.Extractor)
 
-		info[self.fake_key] = generated if info.extractor is None else info.extractor.encode(generated)
-		info[self.real_key] = observation if info.extractor is None else info.extractor.encode(observation)
+
+	@data_args(observation='observation', generated='generated')
+	def _judge_step(self, info, observation, generated):
+		info[self.fake_key] = generated if self.extractor is None else self.extractor.encode(generated)
+		info[self.real_key] = observation if self.extractor is None else self.extractor.encode(observation)
 		return info
 
 
@@ -98,9 +81,21 @@ class AbstractFeatureGenerationTask(AbstractGenerationTask):
 		return info
 
 
-	@staticmethod
-	def _compare_features(info, *, fake=None, real=None):
-		raise NotImplementedError
+	@agnosticmethod
+	def compare_features(self, fake, real):
+		return self.feature_criterion.compute_metric(fake, real)
+
+
+	@agnosticmethod
+	def _compare_features(self, info):
+		info[self.score_key] = self.compare_features(info[self.fake_features_key], info[self.real_features_key])
+		return info
+
+
+	# @data_args('score', fake=fake_features_key, real=real_features_key)
+	# def _compare_features(self, fake, real):
+	# 	return self.feature_criterion.compute_metric(fake, real)
+
 
 
 
