@@ -14,7 +14,7 @@ class AbstractGenerationTask(BatchedTask):
 
 
 	@agnosticmethod
-	def run_step(self, info):
+	def _compute_step(self, info):
 		self._generate_step(info=info)
 		self._judge_step(info=info)
 		return info
@@ -60,19 +60,34 @@ class FeatureGenerationTask(AbstractGenerationTask):
 
 
 	feature_criterion = hparam()
-	extractor = hparam(module=models.Extractor)
+	extractor = hparam(None, module=models.Extractor)
 
 
 	@agnosticmethod
-	def _judge_step(self, info):
-		info[self.fake_key] = self.extract(info[self.generated_key])
-		info[self.real_key] = self.extract(info[self.observation_key])
+	def _judge_step(self, info): # TODO: maybe automatically reshape when theres no extractor (B, -1)
+		extractor = self.extractor
+		info[self.fake_key] = info[self.generated_key] if extractor is None \
+			else extractor.extract(info[self.generated_key])
+		info[self.real_key] = info[self.observation_key] if extractor is None \
+			else extractor.extract(info[self.observation_key])
 		return info
 
-	
+
+
+	class ResultsContainer(Cumulative, BatchedTask.ResultsContainer): # TODO: auto-accumulate scores_key
+		def __init__(self, fake_key=None, real_key=None, **kwargs):
+			super().__init__(**kwargs)
+			if fake_key is not None and real_key is not None:
+				self.register_cumulative(fake_key, real_key)
+
+
 	@agnosticmethod
-	def extract(self, observation):
-		return observation if self.extractor is None else self.extractor.extract(observation)
+	def create_results_container(self, info=None, real_key=None, fake_key=None, **kwargs):
+		if real_key is None:
+			real_key = self.real_key
+		if fake_key is None:
+			fake_key = self.fake_key
+		return super().create_results_container(info=info, real_key=real_key, fake_key=fake_key, **kwargs)
 
 
 	@agnosticmethod
@@ -90,13 +105,9 @@ class FeatureGenerationTask(AbstractGenerationTask):
 
 
 	@agnosticmethod
-	def compare_features(self, fake, real):
-		return self.feature_criterion.compute_metric(fake, real)
-
-
-	@agnosticmethod
 	def _compare_features(self, info):
-		info[self.score_key] = self.compare_features(info[self.fake_features_key], info[self.real_features_key])
+		info[self.score_key] = self.feature_criterion.compute_metric(info[self.fake_features_key],
+		                                                             info[self.real_features_key])
 		return info
 
 

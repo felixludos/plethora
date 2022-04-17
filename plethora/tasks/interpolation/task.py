@@ -38,7 +38,7 @@ class LinearInterpolator:
 
 class AbstractInterpolationTask(BatchedTask):
 	@classmethod
-	def run_step(cls, batch, info, **kwargs):
+	def _compute_step(cls, batch, info, **kwargs):
 		info.clear()
 		info.set_batch(batch)
 		cls._encode(info)

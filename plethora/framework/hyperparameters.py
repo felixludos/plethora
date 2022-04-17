@@ -8,9 +8,9 @@ prt = get_printer(__file__)
 
 
 
-class Hyperparameter(classdescriptor, property):
-	def __init__(self, name=None, fget=None, default=None, required=False,
-	             strict=False, cache=False, space=None, **kwargs):
+class Hyperparameter(property, classdescriptor):
+	def __init__(self, name=None, fget=None, default=unspecified_argument, required=False,
+	             strict=False, cache=False, fixed=False, space=None, **kwargs):
 		super().__init__(fget=fget, **kwargs)
 		if name is None:
 			assert fget is not None, 'No name provided'
@@ -23,7 +23,23 @@ class Hyperparameter(classdescriptor, property):
 			space = spaces.CategoricalDim(space)
 		self.space = space
 		self.required = required
+		self.fixed = fixed
 		self.strict = strict # raises and error if an invalid value is set
+
+
+	def getter(self, fn):
+		self.fget = fn
+		return self
+
+
+	def setter(self, fn):
+		self.fset = fn
+		return self
+
+
+	def deleter(self, fn):
+		self.fdel = fn
+		return self
 
 
 	def copy(self):
@@ -47,8 +63,10 @@ class Hyperparameter(classdescriptor, property):
 			self.value = value
 
 
-	def reset(self):
+	def reset(self, obj=None):
 		self.value = self._missing
+		if self.fdel is not None and obj is not None:
+			super().__delete__(obj)
 
 
 	def __str__(self):
@@ -63,6 +81,15 @@ class Hyperparameter(classdescriptor, property):
 		return self.get_value(obj, cls=cls)
 
 
+	def __delete__(self, obj): # TODO: test this
+		self.reset()
+
+
+	def __set__(self, obj, value):
+		self.update_value(value, obj=obj)
+		return self
+
+
 	def get_value(self, obj=None, cls=None):
 		if self.value is not self._missing:
 			return self.value
@@ -74,17 +101,27 @@ class Hyperparameter(classdescriptor, property):
 			if self.cache:
 				self.value = value
 			return value
-		if self.required:
+		if self.required or self.default is unspecified_argument:
 			raise self.MissingHyperparameter(self.name)
 		return self.default
 
 
+	class FixedHyperparameter(Exception):
+		def __init__(self, msg='cant change'):
+			super().__init__(msg)
+
+
 	def validate_value(self, value):
 		if self.space is not None:
-			self.space.validate(value)
+			try:
+				self.space.validate(value)
+			except self.space.InvalidValue:
+				raise self.InvalidValue
 
 
 	def update_value(self, value, obj=None):
+		if self.fixed:
+			raise self.FixedHyperparameter
 		try:
 			self.validate_value(value)
 		except self.InvalidValue as e:
@@ -99,13 +136,20 @@ class Hyperparameter(classdescriptor, property):
 		return value
 
 
-	def __set__(self, obj, value):
-		self.update_value(value, obj=obj)
-		return self
-
-
 
 class Parametrized(metaclass=ClassDescriptable):
+	def __init__(self, *args, **kwargs):
+		super().__init__(*args, **self._extract_hparams(kwargs))
+
+
+	def _extract_hparams(self, kwargs):
+		for key in self.iterate_hparams():
+			if key in kwargs:
+				setattr(self, key, kwargs[key])
+				del kwargs[key]
+		return kwargs
+
+
 	Hyperparameter = Hyperparameter
 	@agnosticmethod
 	def register_hparam(self, name=None, fget=None, default=unspecified_argument, required=False, **kwargs):
@@ -146,7 +190,7 @@ class Parametrized(metaclass=ClassDescriptable):
 
 class ModuleParametrized(Parametrized):
 	class Hyperparameter(Parametrized.Hyperparameter):
-		def __init__(self, default=None, required=True, module=None, cache=False, **kwargs):
+		def __init__(self, default=unspecified_argument, required=True, module=None, cache=False, **kwargs):
 			super().__init__(default=default, required=required, cache=cache or module is not None, **kwargs)
 			self.module = module
 
@@ -182,7 +226,8 @@ class inherit_hparams:
 class hparam:
 	def __init__(self, default=unspecified_argument, space=None, name=None, **kwargs):
 		self.default = default
-		self.name = name
+		assert name is None, 'Cannot specify a different name with hparam'
+		self.name = None
 		self.space = space
 		self.kwargs = kwargs
 
@@ -203,60 +248,8 @@ class hparam:
 		self.name = name
 		setattr(obj, name, obj.register_hparam(name, **self.kwargs))
 
-	
-	def getter(self, fn):
-		self.fget = fn
-		return self
 
 
-	def setter(self, fn):
-		self.fset = fn
-		return self
-
-
-	def deleter(self, fn):
-		self.fdel = fn
-		return self
-
-
-
-
-# class Property(object):
-#     "Emulate PyProperty_Type() in Objects/descrobject.c"
-#
-#     def __init__(self, fget=None, fset=None, fdel=None, doc=None):
-#         self.fget = fget
-#         self.fset = fset
-#         self.fdel = fdel
-#         if doc is None and fget is not None:
-#             doc = fget.__doc__
-#         self.__doc__ = doc
-#
-#     def __get__(self, obj, objtype=None):
-#         if obj is None:
-#             return self
-#         if self.fget is None:
-#             raise AttributeError("unreadable attribute")
-#         return self.fget(obj)
-#
-#     def __set__(self, obj, value):
-#         if self.fset is None:
-#             raise AttributeError("can't set attribute")
-#         self.fset(obj, value)
-#
-#     def __delete__(self, obj):
-#         if self.fdel is None:
-#             raise AttributeError("can't delete attribute")
-#         self.fdel(obj)
-#
-#     def getter(self, fget):
-#         return type(self)(fget, self.fset, self.fdel, self.__doc__)
-#
-#     def setter(self, fset):
-#         return type(self)(self.fget, fset, self.fdel, self.__doc__)
-#
-#     def deleter(self, fdel):
-#         return type(self)(self.fget, self.fset, fdel, self.__doc__)
 
 
 

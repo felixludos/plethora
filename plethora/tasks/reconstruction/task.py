@@ -9,7 +9,7 @@ prt = get_printer(__file__)
 
 class AbstractReconstructionTask(SimpleEvaluationTask):
 	@agnosticmethod
-	def run_step(self, info):
+	def _compute_step(self, info):
 		self._encode_step(info)
 		self._decode_step(info)
 		self._compare_step(info)
@@ -45,35 +45,22 @@ class ReconstructionTask(AbstractReconstructionTask):
 
 	@agnosticmethod
 	def _encode_step(self, info):
-		info[self.latent_key] = self.encode(info[self.observation_key])
+		observation = info[self.observation_key]
+		info[self.latent_key] = observation if self.encoder is None else self.encoder.encode(observation)
 		return info
-
-	
-	@agnosticmethod
-	def encode(self, observation):
-		return observation if self.encoder is None else self.encoder.encode(observation)
 	
 	
 	@agnosticmethod
 	def _decode_step(self, info):
-		info[self.reconstruction_key] = self.decode(info[self.latent_key])
+		info[self.reconstruction_key] = self.decoder.decode(info[self.latent_key])
 		return info
-	
-	
-	@agnosticmethod
-	def decode(self, latent):
-		return self.decoder.decode(latent)
 
 
 	@agnosticmethod
 	def _compare_step(self, info):
-		info[self.evaluation_key] = self.compare(info[self.reconstruction_key], info[self.observation_key])
+		info[self.scores_key] = self.criterion.compare(info[self.reconstruction_key], info[self.observation_key])
 		return info
 
-	
-	@agnosticmethod
-	def compare(self, reconstruction, original):
-		return self.criterion.compare(reconstruction, original)
 
 
 

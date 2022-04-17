@@ -3,7 +3,7 @@ import torch
 
 from omnibelt import get_printer, agnosticmethod, unspecified_argument
 
-from ..framework.features import Seeded, Prepared, with_args
+# from ..framework.features import Seeded
 from ..framework.base import Container
 from ..framework.models import Computable
 from ..framework import hparam, inherit_hparams
@@ -12,12 +12,22 @@ from ..framework import hparam, inherit_hparams
 prt = get_printer(__file__)
 
 
-class Task(Computable, Prepared, Seeded): # TODO: specify random seed for reproducibility
+class Task(Computable): # TODO: specify random seed for reproducibility
 	dataset = None
 	slim = False
 	online = False
+	auto_update_attrs = True
+
 	score_key = 'score'
-	
+
+	def _extract_hparams(self, kwargs):
+		remaining = super()._extract_hparams(kwargs)
+		if self.auto_update_attrs:
+			for key, val in remaining:
+				setattr(self, key, val)
+				del remaining[key]
+		return remaining
+
 	
 	@agnosticmethod
 	def score_names(self):
@@ -28,26 +38,12 @@ class Task(Computable, Prepared, Seeded): # TODO: specify random seed for reprod
 	def heavy_results(self):
 		return set()
 
-	
-	# class ResultsContainer(Computable.ResultsContainer):
-	# 	@property
-	# 	def source(self):
-	# 		return self._source if self._source is None else self.dataset
-	# 	@source.setter
-	# 	def source(self, source):
-	# 		self._source = source
 
+	@agnosticmethod
+	def reset(self):
+		for key in self.iterate_hparams():
+			delattr(self, key)
 
-	def _prepare(self, *args, **kwargs):
-		pass
-
-
-	# @agnosticmethod
-	# def create_results_container(self, seed=unspecified_argument, **kwargs):
-	# 	if seed is unspecified_argument:
-	# 		seed = self._seed
-	# 	return super().create_results_container(seed=seed, **kwargs)
-		
 		
 	@staticmethod
 	def run(info, **kwargs):
@@ -55,17 +51,17 @@ class Task(Computable, Prepared, Seeded): # TODO: specify random seed for reprod
 
 
 	@agnosticmethod
-	def select_results(self, inp, out):
-		heavy = self.heavy_results()
-		if getattr(out, 'slim', False):
+	def filter_results(self, info):
+		if self.slim:
+			heavy = self.heavy_results()
 			for key in heavy:
-				if key in out:
-					del out[key]
-		return out
+				if key in info:
+					del info[key]
+		return info
 
 
 	@agnosticmethod
-	def compute(self, source=None, **kwargs):
+	def compute(self, source=None, info=None, **kwargs):
 		'''
 		:param slim: use little space (in results)
 		:param online: use little time (in computing results)
@@ -74,16 +70,13 @@ class Task(Computable, Prepared, Seeded): # TODO: specify random seed for reprod
 		:param info: results container (created using self._create_results_container)
 		:return: results container
 		'''
-		self.prepare()
-		return super().compute(source=source, **kwargs)
 
+		if isinstance(self, type): # implicit task instance
+			return self(**kwargs).compute(source=source, info=info)
+		# self.prepare(**kwargs)
+		info = super().compute(source=source, info=info, **kwargs)
+		return self.filter_results(info)
 
-	@agnosticmethod
-	def _compute(self, info, **kwargs):
-		out = self.run(info, **kwargs)
-		return self.select_results(info, out)
-
-		
 
 
 class BatchedTask(Task):
@@ -96,12 +89,11 @@ class BatchedTask(Task):
 
 	@agnosticmethod
 	def loop(self, info):
-		if info.source is not None:
-			info.new_source(info.source)
+		if info.source is not None: # batch already exists (no need to generate one)
 			yield info
 			return
 
-		itr = info.dataset.get_iterator(num_samples=self.num_samples, batch_size=self.batch_size, pbar=self.pbar,
+		itr = self.dataset.get_iterator(num_samples=self.num_samples, batch_size=self.batch_size, pbar=self.pbar,
 		                                force_batch_size=self.force_batch_size, hard_limit=self.hard_sample_limit,
 		                                gen=info.gen)
 		for batch in itr:
@@ -110,14 +102,14 @@ class BatchedTask(Task):
 
 
 	@agnosticmethod
-	def run(self, info):
+	def _compute(self, info):
 		for batch in self.loop(info):
-			self.run_step(batch)
+			self._compute_step(batch)
 		return self.aggregate(info)
 
 
 	@staticmethod
-	def run_step(info):
+	def _compute_step(info):
 		raise NotImplementedError
 
 	
@@ -166,10 +158,13 @@ class Cumulative(BatchedTask.ResultsContainer):
 		pass
 
 
-	def aggregate(self, key):
+	def aggregate(self, key, stack=False):
 		if key not in self._cumulatives:
 			raise self.MissingCumulative(key)
-		return torch.cat(self._cumulatives[key])
+		elms = [torch.as_tensor(x) for x in self._cumulatives]
+		if key in self._auto_cumulative_keys and key in self: # automatically add last batch (fence-post problem)
+			elms.append(torch.as_tensor(self[key]))
+		return torch.stack(elms) if stack or len(elms[0].shape) == 0 else torch.cat(elms)
 
 
 
@@ -178,8 +173,18 @@ class SimpleEvaluationTask(BatchedTask):
 	scores_key = 'scores'
 
 
-	# class ResultsContainer(Cumulative, BatchedTask.ResultsContainer): # TODO
-	# 	pass
+	class ResultsContainer(Cumulative, BatchedTask.ResultsContainer): # TODO: auto-accumulate scores_key
+		def __init__(self, scores_key=None, **kwargs):
+			super().__init__(**kwargs)
+			if scores_key is not None:
+				self.register_cumulative(scores_key)
+
+
+	@agnosticmethod
+	def create_results_container(self, info=None, scores_key=None, **kwargs):
+		if scores_key is None:
+			scores_key = self.scores_key
+		return super().create_results_container(info=info, scores_key=scores_key, **kwargs)
 
 
 	@agnosticmethod

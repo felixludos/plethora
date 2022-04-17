@@ -72,63 +72,63 @@ class DeviceContainer(Device):
 
 
 
-class RegisteredArguments:
-	_registered_args = set()
-
-	def __init__(self, *args, default_arg_value=None, _registered_args=None, **kwargs):
-		if _registered_args is None:
-			_registered_args = self._registered_args.copy()
-		self._registered_args = _registered_args
-		super().__init__(*args, **self._extract_registered_args(kwargs, default_arg_value=default_arg_value))
-
-
-	@agnosticmethod
-	def _extract_registered_args(self, kwargs, default_arg_value=None):
-		for arg in self.iterate_args():
-			if arg in kwargs:
-				setattr(self, arg, kwargs[arg])
-				del kwargs[arg]
-			elif not hasattr(self, arg) and default_arg_value is not unspecified_argument:
-				setattr(self, arg, default_arg_value)
-		return kwargs
-
-
-	@agnosticmethod
-	def register_arg(self, *keys, **defaults):
-		self._results_args.update(keys)
-		self._results_args.update(defaults.keys())
-		for key, val in defaults.items():
-			setattr(self, key, val)
-
-
-	@agnosticmethod
-	def iterate_args(self, items=False, default_value=unspecified_argument, skip=None, recurse=True):
-		if skip is None:
-			skip = set()
-		for key in self._registered_args:
-			if key not in skip:
-				skip.add(key)
-			val = getattr(self, key, default_value)
-			if val is not unspecified_argument:
-				yield (key, val) if items else key
-
-		if recurse:
-			parents = self.mro()[1:] if isinstance(self, type) else self.__class__.mro()
-			for cls in parents:
-				if issubclass(cls, RegisteredArguments):
-					yield from cls.iterate_args(items=items, default_value=default_value, skip=skip, recurse=False)
-
-
-
-class with_args: # decorator
-	def __init__(self, *keys, **params):
-		self.keys = keys
-		self.params = params
+# class RegisteredArguments:
+# 	_registered_args = set()
+#
+# 	def __init__(self, *args, default_arg_value=None, _registered_args=None, **kwargs):
+# 		if _registered_args is None:
+# 			_registered_args = self._registered_args.copy()
+# 		self._registered_args = _registered_args
+# 		super().__init__(*args, **self._extract_registered_args(kwargs, default_arg_value=default_arg_value))
+#
+#
+# 	@agnosticmethod
+# 	def _extract_registered_args(self, kwargs, default_arg_value=None):
+# 		for arg in self.iterate_args():
+# 			if arg in kwargs:
+# 				setattr(self, arg, kwargs[arg])
+# 				del kwargs[arg]
+# 			elif not hasattr(self, arg) and default_arg_value is not unspecified_argument:
+# 				setattr(self, arg, default_arg_value)
+# 		return kwargs
+#
+#
+# 	@agnosticmethod
+# 	def register_arg(self, *keys, **defaults):
+# 		self._results_args.update(keys)
+# 		self._results_args.update(defaults.keys())
+# 		for key, val in defaults.items():
+# 			setattr(self, key, val)
+#
+#
+# 	@agnosticmethod
+# 	def iterate_args(self, items=False, default_value=unspecified_argument, skip=None, recurse=True):
+# 		if skip is None:
+# 			skip = set()
+# 		for key in self._registered_args:
+# 			if key not in skip:
+# 				skip.add(key)
+# 			val = getattr(self, key, default_value)
+# 			if val is not unspecified_argument:
+# 				yield (key, val) if items else key
+#
+# 		if recurse:
+# 			parents = self.mro()[1:] if isinstance(self, type) else self.__class__.mro()
+# 			for cls in parents:
+# 				if issubclass(cls, RegisteredArguments):
+# 					yield from cls.iterate_args(items=items, default_value=default_value, skip=skip, recurse=False)
 
 
-	def __call__(self, cls):
-		cls.register_arg(*self.key, **self.params)
-		return cls
+
+# class with_args: # decorator
+# 	def __init__(self, *keys, **params):
+# 		self.keys = keys
+# 		self.params = params
+#
+#
+# 	def __call__(self, cls):
+# 		cls.register_arg(*self.key, **self.params)
+# 		return cls
 
 
 

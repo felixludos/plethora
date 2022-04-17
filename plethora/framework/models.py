@@ -2,8 +2,8 @@
 
 import torch
 from omnibelt import agnosticmethod, unspecified_argument#, mix_into
-from .features import Seeded, RegisteredArguments, with_args
-from .hyperparameters import Parametrized, ModuleParametrized, with_modules
+from .features import Seeded
+from .hyperparameters import Parametrized, ModuleParametrized
 from .base import Function, Container
 
 
@@ -38,10 +38,16 @@ class ModelBuilder:
 
 
 
-@with_args(score_key=None)
-class Resultable(RegisteredArguments):
-	@with_args(source=None)
-	class ResultsContainer(Seeded, RegisteredArguments, Container):
+class Resultable:
+	seed = None
+	score_key = None
+
+	class ResultsContainer(Seeded, Container):
+		def __init__(self, source=None, score_key=None, **kwargs):
+			super().__init__(**kwargs)
+			self.source = source
+			self._score_key = score_key
+
 
 		def new_source(self, source):
 			self.clear()
@@ -76,15 +82,6 @@ class Resultable(RegisteredArguments):
 
 
 	@agnosticmethod
-	def _fill_in_defaults(self, defaults, default_value=unspecified_argument):
-		defaults = {key: val for key, val in defaults.items() if val is not unspecified_argument}
-		kwargs = dict(self.iterate_args(items=True, default_value=default_value))
-		args = set(kwargs.keys())
-		kwargs.update(defaults)
-		return args, kwargs
-
-
-	@agnosticmethod
 	def _integrate_results(self, info, **kwargs):
 		raise NotImplementedError # TODO
 		if not isinstance(info, self.ResultsContainer):
@@ -94,10 +91,14 @@ class Resultable(RegisteredArguments):
 
 
 	@agnosticmethod
-	def create_results_container(self, info=None, **kwargs):
+	def create_results_container(self, info=None, score_key=None, seed=unspecified_argument, **kwargs):
+		if score_key is None:
+			score_key = self.score_key
+		if seed is unspecified_argument:
+			seed = self.seed
 		if info is not None:
-			return self._integrate_results(info, **kwargs)
-		return self.ResultsContainer(**kwargs)
+			return self._integrate_results(info, score_key=score_key, seed=seed, **kwargs)
+		return self.ResultsContainer(score_key=score_key, **kwargs)
 
 
 
@@ -132,15 +133,8 @@ class Buildable:
 
 class Computable(Parametrized, Resultable):
 	@agnosticmethod
-	def register_hparam(self, name, default=None, **kwargs):
-		self.register_arg(name)
-		return super().register_hparam(name=name, default=default, **kwargs)
-
-
-	@agnosticmethod
 	def compute(self, source=None, **kwargs):
-		registered_args, kwargs = self._fill_in_defaults(kwargs)
-		info = self.create_results_container(source=source, _registered_args=registered_args, **kwargs)
+		info = self.create_results_container(source=source, **kwargs)
 		return self._compute(info)
 
 
@@ -160,7 +154,7 @@ class Fitable(Resultable):
 
 
 
-class Model(Parametrized, Fitable, Buildable):
+class Model(ModuleParametrized, Fitable, Buildable):
 
 	@agnosticmethod
 	def create_fit_results_container(self, **kwrags):
@@ -188,8 +182,9 @@ class Model(Parametrized, Fitable, Buildable):
 
 
 
-@with_modules(model=None)
 class Trainer(ModuleParametrized, Fitable):
+	model = hparam(module=Model)
+
 	def __init__(self, model, source=None, **kwargs):
 		super().__init__(**kwargs)
 		self.source = source
@@ -278,21 +273,21 @@ class TrainableModel(Model):
 class Extractor(Function):
 	@agnosticmethod
 	def extract(self, observation):
-		return self(observation)
+		raise NotImplementedError
 
 
 
 class Encoder(Extractor):
 	@agnosticmethod
 	def encode(self, observation):
-		return self.extract(observation)
+		raise NotImplementedError
 
 
 
 class Decoder(Function):
 	@agnosticmethod
 	def decode(self, latent):
-		return self(latent)
+		raise NotImplementedError
 
 
 
@@ -317,7 +312,7 @@ class Criterion(Function):
 
 
 
-class Metric(Criterion):
+class Metric(Criterion): # obeys triangle inequality
 	@agnosticmethod
 	def distance(self, observation1, observation2):
 		raise NotImplementedError
@@ -329,14 +324,14 @@ class Metric(Criterion):
 
 
 
-class Score(Function):
-	@agnosticmethod
-	def score(self, observation):
-		raise NotImplementedError
+# class Score(Function):
+# 	@agnosticmethod
+# 	def score(self, observation):
+# 		raise NotImplementedError
 
 
 
-class Interpolator(Function):
+class Interpolator(Function): # returns N steps to get from start to finish ("evenly spaces", by default)
 	@staticmethod
 	def interpolate(start, end, N):
 		start, end = start.unsqueeze(1), end.unsqueeze(1)

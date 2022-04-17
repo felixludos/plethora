@@ -12,7 +12,7 @@ prt = get_printer(__file__)
 
 
 class DownstreamTask(Task):
-	
+
 	encoder = hparam(default=None, module=models.Extractor)
 
 
@@ -26,32 +26,33 @@ class DownstreamTask(Task):
 		return view
 
 
+	@agnosticmethod
+	def create_results_container(self, source=None, **kwargs):
+		info = super().create_results_container(source=source, **kwargs)
+		if source is not None:
+			info.new_source(self._wrap_dataset(source, self.encoder))
+
+
 	@hparam(cache=True)
 	def dataset(self):
 		return self._wrap_dataset(self._dataset, self.encoder)
-		
-	
-	@dataset.setter
+	@dataset.setter # TODO: fix linting issue
 	def dataset(self, dataset):
 		self._dataset = dataset
 
 
-	# class ResultsContainer(Task.ResultsContainer):
-	# 	@property
-	# 	def encoder(self):
-	# 		return self._encoder
-	# 	@encoder.setter
-	# 	def encoder(self, encoder):
-	# 		self._encoder = encoder
-	# 		if self.source is not None:
-	# 			self.source.get_buffer('observation').encoder = encoder
-	# 		if self.dataset is not None:
-	# 			self.dataset.get_buffer('observation').encoder = encoder
-
 
 @inherit_hparams('dataset')
 class InferenceTask(DownstreamTask):
+	train_score_key = 'train_score'
+
+	shuffle_split = True
 	eval_split = hparam(0.2)
+
+	def __init__(self, **kwargs):
+		super().__init__(**kwargs)
+		self._train_dataset = None
+		self._eval_dataset = None
 	
 
 	EstimatorBuilder = GradientBoostingBuilder # default builder using gradient boosting trees
@@ -66,34 +67,70 @@ class InferenceTask(DownstreamTask):
 
 
 	@agnosticmethod
-	def create_results_container(self, **kwargs):
-		info = super().create_results_container(**kwargs)
-		self._prepare_source(info)
+	def create_results_container(self, source=None, **kwargs):
+		info = super().create_results_container(source=source, **kwargs)
+		if info.source is not None:
+			self._split_dataset(info.source)
 		return info
-	
-	
+
+
+	@hparam()
+	def train_dataset(self):
+		if self._train_dataset is None:
+			self._split_dataset()
+		return self._train_dataset
+	@train_dataset.deleter
+	def train_dataset(self):
+		self._train_dataset = None
+
+
+	@hparam()
+	def eval_dataset(self):
+		if self._eval_dataset is None:
+			self._split_dataset()
+		return self._eval_dataset
+	@eval_dataset.deleter
+	def eval_dataset(self):
+		self._eval_dataset = None
+
+
 	@agnosticmethod
-	def run(self, info):
+	def _split_dataset(self, source=None): # TODO maybe treat these as hparams
+		if source is None:
+			source = self.dataset
+		self._train_dataset, self._eval_dataset = source.split([None, self.eval_split], shuffle=self.shuffle_split,
+		                                                           register_modes=False)
+
+
+	@agnosticmethod
+	def create_results_container(self, source=None, **kwargs):
+		info = super().create_results_container(source=source, **kwargs)
+		if source is not None:
+			self._split_dataset(source)
+		return info
+
+
+	@agnosticmethod
+	def _compute(self, info):
 		self._train(info)
 		self._eval(info)
 		return info
 
 
 	@agnosticmethod
-	def _prepare(self, shuffle=True):
-		self.train_dataset, self.eval_dataset = self.dataset.split([None, self.eval_split], shuffle=shuffle,
-		                                                           register_modes=False)
-
-
-	@agnosticmethod
 	def _train(self, info):
-		info.merge_results(self.estimator.fit(self.train_dataset))
+		out = self.estimator.fit(self.train_dataset)
+		info.merge_results(out)
+		if 'score' in out:
+			info[self.train_score_key] = out['score']
 		return info
 
 
 	@agnosticmethod
 	def _eval(self, info):
-		info.merge_results(self.estimator.evaluate(self.eval_dataset))
+		out = self.estimator.evaluate(self.eval_dataset)
+		info.merge_results(out)
+		info[self.score_key] = out['score']
 		return info
 
 
