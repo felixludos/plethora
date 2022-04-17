@@ -5,7 +5,7 @@ import piq
 from piq import IS, FID, GS, KID, MSID, PR
 from piq import inception_score
 from piq.fid import _compute_statistics as compute_fid_stats, _compute_fid as compute_frechet_distance
-from ...framework import models, hparam, inherit_hparams, data_args
+from ...framework import models, hparam, inherit_hparams
 from .task import FeatureGenerationTask
 
 
@@ -38,23 +38,25 @@ class IS_GenerationTask(FeatureGenerationTask):
 		return mu, sigma
 	
 
-	@data_args(score_key, fake=FeatureGenerationTask.fake_features_key, real=FeatureGenerationTask.real_features_key)
-	def _compare_features(self, info, fake, real):
-		fake_mu, fake_std = self.inception_score(fake)
-		real_mu, real_std = self.inception_score(real)
+	@agnosticmethod
+	def _compare_features(self, info):
+		fake_mu, fake_std = self.inception_score(info[self.fake_features_key])
+		real_mu, real_std = self.inception_score(info[self.real_features_key])
 		
 		info.update({
-			'fake_mu': fake_mu, 'fake_std': fake_std,
-			'real_mu': real_mu, 'real_std': real_std,
+			'fake_inception_mu': fake_mu, 'fake_inception_std': fake_std,
+			'real_inception_mu': real_mu, 'real_inception_std': real_std,
 		})
 
-		return self.metric(fake_mu.view(1, -1), real_mu.view(1, -1)).item()
-	
+		info[self.score_key] = self.metric(fake_mu.view(1, -1), real_mu.view(1, -1)).item()
+		return info
+
 
 
 @inherit_hparams('generator', 'extractor')
 class FID_GenerationTask(FeatureGenerationTask):
 	score_key = 'fid'
+	
 	
 	@staticmethod
 	def compute_fid_stats(features):
@@ -65,24 +67,26 @@ class FID_GenerationTask(FeatureGenerationTask):
 	def compute_frechet_distance(mu1, sigma1, mu2, sigma2):
 		return compute_frechet_distance(mu1, sigma1, mu2, sigma2)
 	
-
-	@data_args(score_key, fake=FeatureGenerationTask.fake_features_key, real=FeatureGenerationTask.real_features_key)
-	def _compare_features(self, info, fake, real):
-		fake_mu, fake_std = self.compute_fid_stats(fake)
-		real_mu, real_std = self.compute_fid_stats(real)
+	
+	@agnosticmethod
+	def _compare_features(self, info):
+		fake_mu, fake_std = self.compute_fid_stats(info[self.fake_features_key])
+		real_mu, real_std = self.compute_fid_stats(info[self.real_features_key])
 
 		info.update({
-			'fake_mu': fake_mu, 'fake_std': fake_std,
-			'real_mu': real_mu, 'real_std': real_std,
+			'fake_fid_mu': fake_mu, 'fake_fid_std': fake_std,
+			'real_fid_mu': real_mu, 'real_fid_std': real_std,
 		})
-		return self.compute_frechet_distance(fake_mu, fake_std, real_mu, real_std).item()
+		score = self.compute_frechet_distance(fake_mu, fake_std, real_mu, real_std).item()
+		info[self.score_key] = score
+		return info
 
 
 
 @inherit_hparams('generator', 'extractor')
 class FIDInfinity_GenerationTask(FID_GenerationTask):
 	@agnosticmethod
-	def _compare_features(self, info, fake, real): # TODO
+	def _compare_features(self, info): # TODO
 		raise NotImplementedError
 
 
@@ -102,12 +106,6 @@ class GS_GenerationTask(FeatureGenerationTask):
 	def feature_criterion(self):
 		return GS(sample_size=self.sample_size, num_iters=self.num_iters, gamma=self.gamma, i_max=self.i_max,
 		               num_workers=self.num_workers)
-
-
-	@data_args(score_key, fake=FeatureGenerationTask.fake_features_key, real=FeatureGenerationTask.real_features_key)
-	def _compare_features(self, info):
-		fake, real = self._extract_info(info, self.fake_features_key, self.real_features_key)
-		return super()._compare_features(fake, real)
 
 
 
@@ -130,12 +128,17 @@ class KID_GenerationTask(FeatureGenerationTask):
                          average=self.average, n_subsets=self.n_subsets, subset_size=self.subset_size,
                          ret_var=True)
 
-
-	@data_args(score_key)
+	
+	@agnosticmethod
 	def _compare_features(self, info):
-		score, variance = super()._compare_features(info, _process_out=False)
-		info['kid_variance'] = variance
-		return score
+		info = super()._compare_features(info)
+		info[self.score_key], info['kid_var'] = info[self.score_key]
+		return info
+
+
+	@agnosticmethod
+	def score_names(self):
+		return {'kid_var', *super().score_names()}
 
 
 
@@ -149,8 +152,8 @@ class MSID_GenerationTask(FeatureGenerationTask):
 	niters = hparam(100)
 	rademacher = hparam(False)
 	normalized_laplacian = hparam(True)
-	normalize = hparam('empty')
-	msid_mode = hparam('max')
+	normalize = hparam('empty', space=['empty', 'complete', 'er'])
+	msid_mode = hparam('max', space=['max', 'l2'])
 
 
 	@hparam(cache=True)
@@ -158,12 +161,6 @@ class MSID_GenerationTask(FeatureGenerationTask):
 		return MSID(ts=self.ts, k=self.k, m=self.m, niters=self.niters, rademacher=self.rademacher,
 		                 normalized_laplacian=self.normalized_laplacian, normalize=self.normalize,
 		                 msid_mode=self.msid_mode)
-
-
-	@data_args(score_key, fake=FeatureGenerationTask.fake_features_key, real=FeatureGenerationTask.real_features_key)
-	def _compare_features(self, fake, real):
-		return super()._compare_features(fake, real)
-
 
 
 
@@ -179,18 +176,20 @@ class PR_GenerationTask(FeatureGenerationTask):
 		return PR(nearest_k=self.nearest_k)
 
 
-	@data_args(score_key, fake=FeatureGenerationTask.fake_features_key, real=FeatureGenerationTask.real_features_key)
-	def _compare_features(self, info, fake, real):
-		precision, recall = super()._compare_features(fake, real)
+	@agnosticmethod
+	def score_names(self):
+		return {'precision', 'recall', *super().score_names()}
+
+
+	@agnosticmethod
+	def _compare_features(self, info):
+		info = super()._compare_features(info)
+		precision, recall = info[self.score_key]
 		info['precision'], info['recall'] = precision, recall
-		return 2 * precision * recall / (precision + recall)
+		info[self.score_key] = 2 * precision * recall / (precision + recall)
+		return info
 
 
-	# @data_args(score_key, fake='fake', real='real')
-	# def _compare_features(self, info, fake, real):
-	# 	precision, recall = self.feature_criterion.compute_metric(real, fake)
-	# 	info['precision'], info['recall'] = precision, recall
-	# 	return 2 * precision * recall / (precision + recall)
 
 
 

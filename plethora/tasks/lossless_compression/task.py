@@ -2,7 +2,7 @@ import torch
 from omnibelt import get_printer, agnosticmethod
 from ..base import Task, BatchedTask, SimpleEvaluationTask
 
-from ...framework import with_hparams, with_args, with_modules, models
+from ...framework import hparam, inherit_hparams, models
 from .bits_back import BitsBackCompressor
 
 prt = get_printer(__file__)

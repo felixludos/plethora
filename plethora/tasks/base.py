@@ -6,15 +6,22 @@ from omnibelt import get_printer, agnosticmethod, unspecified_argument
 from ..framework.features import Seeded, Prepared, with_args
 from ..framework.base import Container
 from ..framework.models import Computable
+from ..framework import hparam, inherit_hparams
+
 
 prt = get_printer(__file__)
 
 
-@with_args(slim=False, online=False, dataset=None)
 class Task(Computable, Prepared, Seeded): # TODO: specify random seed for reproducibility
+	dataset = None
+	slim = False
+	online = False
+	score_key = 'score'
+	
+	
 	@agnosticmethod
 	def score_names(self):
-		return set() if self.score_key is None else {'score'}
+		return set() if self.score_key is None else {self.score_key}
 
 
 	@agnosticmethod
@@ -22,24 +29,24 @@ class Task(Computable, Prepared, Seeded): # TODO: specify random seed for reprod
 		return set()
 
 	
-	class ResultsContainer(Computable.ResultsContainer):
-		@property
-		def source(self):
-			return self._source if self._source is None else self.dataset
-		@source.setter
-		def source(self, source):
-			self._source = source
+	# class ResultsContainer(Computable.ResultsContainer):
+	# 	@property
+	# 	def source(self):
+	# 		return self._source if self._source is None else self.dataset
+	# 	@source.setter
+	# 	def source(self, source):
+	# 		self._source = source
 
 
 	def _prepare(self, *args, **kwargs):
 		pass
 
 
-	@agnosticmethod
-	def create_results_container(self, seed=unspecified_argument, **kwargs):
-		if seed is unspecified_argument:
-			seed = self._seed
-		return super().create_results_container(seed=seed, **kwargs)
+	# @agnosticmethod
+	# def create_results_container(self, seed=unspecified_argument, **kwargs):
+	# 	if seed is unspecified_argument:
+	# 		seed = self._seed
+	# 	return super().create_results_container(seed=seed, **kwargs)
 		
 		
 	@staticmethod
@@ -85,31 +92,6 @@ class BatchedTask(Task):
 	force_batch_size = None
 	hard_sample_limit = None
 	pbar = None
-
-	def __init__(self, num_samples=unspecified_argument, batch_size=unspecified_argument,
-	             force_batch_size=unspecified_argument, hard_sample_limit=unspecified_argument,
-	             pbar=unspecified_argument, **kwargs):
-		super().__init__(**kwargs)
-		if num_samples is not unspecified_argument:
-			self.num_samples = num_samples
-		if batch_size is not unspecified_argument:
-			self.batch_size = batch_size
-		if force_batch_size is not unspecified_argument:
-			self.force_batch_size = force_batch_size
-		if hard_sample_limit is not unspecified_argument:
-			self.hard_sample_limit = hard_sample_limit
-		if pbar is not unspecified_argument:
-			self.pbar = pbar
-		# self.register_arg('num_samples', 'batch_size', 'force_batch_size', 'hard_sample_limit', 'pbar')
-
-
-	# class ResultsContainer(Task.ResultsContainer):
-	# 	@property
-	# 	def source(self): # prevent source (batch) from defaulting to full dataset
-	# 		return self._source
-	# 	@source.setter
-	# 	def source(self, source):
-	# 		self._source = source
 
 
 	@agnosticmethod
@@ -191,23 +173,13 @@ class Cumulative(BatchedTask.ResultsContainer):
 
 
 
-@with_args(evaluation_key='scores')
 class SimpleEvaluationTask(BatchedTask):
 	score_key = 'mean'
-
-	class ResultsContainer(Cumulative, BatchedTask.ResultsContainer):
-		def __init__(self, evaluation_key=None, **kwargs):
-			super().__init__(**kwargs)
-			if evaluation_key is not None:
-				self.register_cumulative(evaluation_key)
-			self.evaluation_key = evaluation_key
+	scores_key = 'scores'
 
 
-	@agnosticmethod
-	def create_results_container(self, evaluation_key=unspecified_argument, **kwargs):
-		if evaluation_key is unspecified_argument:
-			evaluation_key = self.evaluation_key
-		return super().create_results_container(evaluation_key=evaluation_key, **kwargs)
+	# class ResultsContainer(Cumulative, BatchedTask.ResultsContainer): # TODO
+	# 	pass
 
 
 	@agnosticmethod
@@ -217,20 +189,17 @@ class SimpleEvaluationTask(BatchedTask):
 
 	@agnosticmethod
 	def heavy_results(self):
-		heavy = super().heavy_results()
-		if self.evaluation_key is not None:
-			heavy.add(self.evaluation_key)
-		return heavy
+		return {self.scores_key, *super().heavy_results()}
 	
 
-	@staticmethod
-	def aggregate(info):
+	@agnosticmethod
+	def aggregate(self, info):
 		info = super().aggregate(info)
 
-		scores = info.aggregate(info.evaluation_key)
+		scores = info.aggregate(self.scores_key)
 
 		info.update({
-			info.evaluation_key: scores,
+			self.scores_key: scores,
 			'mean': scores.mean().item(),
 			'max': scores.max().item(),
 			'min': scores.min().item(),

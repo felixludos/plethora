@@ -1,6 +1,6 @@
 import torch
 from omnibelt import get_printer, unspecified_argument, agnosticmethod
-from ...framework import models, hparam, inherit_hparams, data_args
+from ...framework import models, hparam, inherit_hparams
 from ..base import Task, BatchedTask, SimpleEvaluationTask, Cumulative
 
 prt = get_printer(__file__)
@@ -8,6 +8,8 @@ prt = get_printer(__file__)
 
 
 class AbstractGenerationTask(BatchedTask):
+	generated_key = 'generated'
+	
 	generator = hparam(module=models.Generator)
 
 
@@ -18,14 +20,10 @@ class AbstractGenerationTask(BatchedTask):
 		return info
 
 
-	@data_args('generated')
+	@agnosticmethod
 	def _generate_step(self, info):
-		return self.generator.generate(info.batch.size, gen=info.gen)
-
-	# @agnosticmethod
-	# def _generate_step(self, info):
-	# 	info['generated'] = self.generator.generate(info.batch.size, gen=info.gen)
-	# 	return info
+		info[self.generated_key] = self.generator.generate(info.batch.size, gen=info.gen)
+		return info
 
 
 	@agnosticmethod
@@ -38,18 +36,23 @@ class AbstractGenerationTask(BatchedTask):
 class DiscriminatorGenerationTask(SimpleEvaluationTask, AbstractGenerationTask):
 	discriminator = hparam(module=models.Discriminator)
 
-	@data_args('scores', samples='generated')
-	def _judge_step(self, samples):
+
+	@agnosticmethod
+	def _judge_step(self, info):
+		info[self.scores_key] = self.judge(info[self.generated_key])
+		return info
+
+
+	@agnosticmethod
+	def judge(self, samples):
 		return self.discriminator.judge(samples)
 
-	# @agnosticmethod
-	# def _judge_step(self, info):
-	# 	info['scores'] = self.discriminator.judge(info['generated'])
-	# 	return info
 
 
 @inherit_hparams('generator')
 class FeatureGenerationTask(AbstractGenerationTask):
+	observation_key = 'observation'
+	
 	fake_key = 'fake'
 	real_key = 'real'
 	fake_features_key = 'fake_features'
@@ -60,11 +63,16 @@ class FeatureGenerationTask(AbstractGenerationTask):
 	extractor = hparam(module=models.Extractor)
 
 
-	@data_args(observation='observation', generated='generated')
-	def _judge_step(self, info, observation, generated):
-		info[self.fake_key] = generated if self.extractor is None else self.extractor.encode(generated)
-		info[self.real_key] = observation if self.extractor is None else self.extractor.encode(observation)
+	@agnosticmethod
+	def _judge_step(self, info):
+		info[self.fake_key] = self.extract(info[self.generated_key])
+		info[self.real_key] = self.extract(info[self.observation_key])
 		return info
+
+	
+	@agnosticmethod
+	def extract(self, observation):
+		return observation if self.extractor is None else self.extractor.extract(observation)
 
 
 	@agnosticmethod
@@ -90,11 +98,6 @@ class FeatureGenerationTask(AbstractGenerationTask):
 	def _compare_features(self, info):
 		info[self.score_key] = self.compare_features(info[self.fake_features_key], info[self.real_features_key])
 		return info
-
-
-	# @data_args('score', fake=fake_features_key, real=real_features_key)
-	# def _compare_features(self, fake, real):
-	# 	return self.feature_criterion.compute_metric(fake, real)
 
 
 
