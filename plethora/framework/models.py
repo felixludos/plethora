@@ -27,7 +27,7 @@ class ModelBuilder:
 		return self.build()
 
 
-	class MissingKwargsError(Exception):
+	class MissingKwargsError(KeyError):
 		def __init__(self, *keys):
 			super().__init__(', '.join(keys))
 			self.keys = keys

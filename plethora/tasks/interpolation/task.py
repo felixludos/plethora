@@ -10,21 +10,6 @@ prt = get_printer(__file__)
 
 
 
-# class AccumulationContainer(ResultsContainer):
-# 	def __init__(self, **kwargs):
-# 		super().__init__(**kwargs)
-# 		self.criteria = []
-#
-#
-# 	def accumulate(self, criteria):
-# 		self.criteria.append(criteria)
-#
-#
-# 	def aggregate(self):
-# 		return torch.cat(self.criteria)
-
-
-
 class LinearInterpolator:
 	@staticmethod
 	def interpolate(start, end, n_steps=12):

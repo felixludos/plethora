@@ -16,6 +16,14 @@ class DownstreamTask(Task):
 	encoder = hparam(default=None, module=models.Extractor)
 
 
+	@hparam(cache=True)
+	def dataset(self):
+		return self._wrap_dataset(self._dataset, self.encoder)
+	@dataset.setter # TODO: fix linting issue
+	def dataset(self, dataset):
+		self._dataset = dataset
+
+
 	ObservationBuffer = EncodableDataset.EncodedBuffer
 	def _wrap_dataset(self, dataset, encoder=None):
 		if encoder is None:
@@ -31,14 +39,6 @@ class DownstreamTask(Task):
 		info = super().create_results_container(source=source, **kwargs)
 		if source is not None:
 			info.new_source(self._wrap_dataset(source, self.encoder))
-
-
-	@hparam(cache=True)
-	def dataset(self):
-		return self._wrap_dataset(self._dataset, self.encoder)
-	@dataset.setter # TODO: fix linting issue
-	def dataset(self, dataset):
-		self._dataset = dataset
 
 
 

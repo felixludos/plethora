@@ -1,26 +1,25 @@
 
 import torch
-from omnibelt import get_printer
-from ...framework import util
-from ..base import Task, BatchedTask
+from omnibelt import get_printer, agnosticmethod
+from ...datasets import base as dataset_base
+from ...framework import util, hparam, inherit_hparams, models
+from ..base import Task, BatchedTask, Cumulative
 
 prt = get_printer(__file__)
 
 
 
 class AbstractMetricTask(BatchedTask):
-	@classmethod
-	def _compute_step(cls, batch, info, **kwargs):
-		info.clear()
-		info.set_batch(batch)
-		cls._encode(info)
-		cls._measure_distance(info)
-		cls._true_distance(info)
+	@agnosticmethod
+	def _compute_step(self, info):
+		self._encode_step(info)
+		self._measure_distance(info)
+		self._true_distance(info)
 		return info
 
 
 	@staticmethod
-	def _encode(info):
+	def _encode_step(info):
 		raise NotImplementedError
 
 
@@ -36,87 +35,79 @@ class AbstractMetricTask(BatchedTask):
 
 
 class MetricTask(AbstractMetricTask):
-	def __init__(self, encoder=None, metric=None, criterion=None,
-	             score_key=None, **kwargs):
-		super().__init__(score_key=score_key, **kwargs)
+	score_key = 'agreement'
+	observation_key = 'observation'
+	latent_key = 'latent'
+	mechanism_key = 'mechanism'
 
-		self.encoder = encoder
-		self.metric = metric
-		self.criterion = criterion
-
-
-	@staticmethod
-	def create_results_container(dataset=None, **kwargs):
-		return AccumulationContainer(dataset=dataset, **kwargs)
+	distance_key = 'distance'
+	true_distance_key = 'true_distance'
 
 
-	def _compute(self, **kwargs):
-		return super()._compute(encoder=self.encoder, metric=self.metric, criterion=self.criterion, **kwargs)
+	encoder = hparam(default=None, module=models.Encoder)
+	metric = hparam(module=models.Metric)
+	criterion = hparam(module=models.Criterion)
+	dataset = hparam(module=dataset_base.SyntheticDataset)
 
-
-	@classmethod
-	def prepare(cls, encoder=None, metric=None, criterion=None, **kwargs):
-		if encoder is None:
-			prt.warning('No encoder provided')
-		if metric is None:
-			prt.warning('No metric provided')
-		if criterion is None:
-			prt.warning('No criterion provided')
-		info = super().prepare(**kwargs)
-		info.encoder = encoder
-		info.metric = metric
-		info.criterion = criterion
-		return info
-	
-	
-	@classmethod
-	def run(cls, info, sample_format=None, **kwargs):
-		if sample_format is None:
-			sample_format = 'observation', 'mechanism'
-		return super().run(info, sample_format=sample_format, **kwargs)
-
-	
-	@staticmethod
-	def _encode(info):
-		if 'original' not in info:
-			info['original'] = info.batch[0]
-		code = info['original'] if info.encoder is None else info.encoder.encode(info['original'])
-		info['code'] = code
+	@agnosticmethod
+	def _encode_step(self, info):
+		info[self.latent_key] = info[self.observation_key] if self.encoder is None \
+			else self.encoder.encode(info[self.observation_key])
 		return info
 
 
 	@staticmethod
-	def _measure_distance(info):
-		code = info.get('code', info.get('original'))
-		a, b = code.split(2)
-		distance = info.metric.measure(a, b)
-		info.accumulate_distances(distance)
+	def _split_samples(samples):
+		return samples.chunk(2)
+
+
+	@agnosticmethod
+	def _measure_distance(self, info):
+		code = info[self.latent_key]
+		a, b = self._split_samples(code)
+		distance = self.metric.measure(a, b)
+		info[self.distance_key] = distance#.squeeze()
 		return info
 
 
-	@staticmethod
-	def _true_distance(info):
-		if 'label' not in info:
-			info['label'] = info.batch[1]
-		a, b = info['label'].split(2)
-		distance = info.dataset.distance(a, b)
-		info.accumulate_true_distances(distance)
+	@agnosticmethod
+	def _true_distance(self, info):
+		labels = info[self.mechanism_key]
+		a, b = self._split_samples(labels)
+		info[self.true_distance_key] = self.dataset.distance(a,b)#.squeeze()
 		return info
-	
 
-	@classmethod
-	def aggregate(cls, info, slim=False, online=False, seed=None, gen=None):
+
+
+	class ResultsContainer(Cumulative, BatchedTask.ResultsContainer): # TODO: auto-accumulate scores_key
+		def __init__(self, distance_key=None, true_distance_key=None, **kwargs):
+			super().__init__(**kwargs)
+			if distance_key is not None and true_distance_key is not None:
+				self.register_cumulative(distance_key, true_distance_key)
+
+
+	@agnosticmethod
+	def create_results_container(self, info=None, distance_key=None, true_distance_key=None, **kwargs):
+		if distance_key is None:
+			distance_key = self.distance_key
+		if true_distance_key is None:
+			true_distance_key = self.true_distance_key
+		return super().create_results_container(info=info, distance_key=distance_key,
+		                                        true_distance_key=true_distance_key, **kwargs)
+
+
+	@agnosticmethod
+	def aggregate(self, info, slim=False, online=False, seed=None, gen=None):
 		info = super().aggregate(info)
 		
-		distances = info.aggregate_distances()
-		true_distances = info.aggregate_true_distances()
-		agreement = info.criterion(distances, true_distances)
+		distances = info.aggregate(self.distance_key)
+		true_distances = info.aggregate(self.true_distance_key)
+		agreement = self.criterion(distances, true_distances)
 
 		info.update({
-			'distances': distances,
-			'true_distances': true_distances,
-			
-			'score': agreement,
+			self.distance_key: distances,
+			self.true_distance_key: true_distances,
+			self.score_key: agreement,
 		})
 		return info
 
