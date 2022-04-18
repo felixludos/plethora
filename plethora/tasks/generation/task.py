@@ -21,8 +21,13 @@ class AbstractGenerationTask(BatchedTask):
 
 
 	@agnosticmethod
+	def generate(self, N, gen=None):
+		return self.generator.generate(N, gen=gen)
+
+
+	@agnosticmethod
 	def _generate_step(self, info):
-		info[self.generated_key] = self.generator.generate(info.batch.size, gen=info.gen)
+		info[self.generated_key] = self.generate(info.batch.size, gen=info.gen)
 		return info
 
 
@@ -36,16 +41,15 @@ class AbstractGenerationTask(BatchedTask):
 class DiscriminatorGenerationTask(SimpleEvaluationTask, AbstractGenerationTask):
 	discriminator = hparam(module=models.Discriminator)
 
+	@agnosticmethod
+	def judge(self, samples):
+		return self.discriminator.judge(samples)
+
 
 	@agnosticmethod
 	def _judge_step(self, info):
 		info[self.scores_key] = self.judge(info[self.generated_key])
 		return info
-
-
-	@agnosticmethod
-	def judge(self, samples):
-		return self.discriminator.judge(samples)
 
 
 
@@ -64,14 +68,17 @@ class FeatureGenerationTask(AbstractGenerationTask):
 
 
 	@agnosticmethod
-	def _judge_step(self, info): # TODO: maybe automatically reshape when theres no extractor (B, -1)
-		extractor = self.extractor
-		info[self.fake_key] = info[self.generated_key] if extractor is None \
-			else extractor.extract(info[self.generated_key])
-		info[self.real_key] = info[self.observation_key] if extractor is None \
-			else extractor.extract(info[self.observation_key])
+	def _judge_step(self, info):
+		info[self.fake_key] = self.extract(info[self.generated_key])
+		info[self.real_key] = self.extract(info[self.observation_key])
 		return info
 
+
+	@agnosticmethod
+	def extract(self, observation): # TODO: maybe automatically reshape when theres no extractor (B, -1)
+		if self.extractor is None:
+			return observation.view(observation.shape[0], -1)
+		return self.extractor(observation)
 
 
 	class ResultsContainer(Cumulative, BatchedTask.ResultsContainer): # TODO: auto-accumulate scores_key
@@ -105,9 +112,13 @@ class FeatureGenerationTask(AbstractGenerationTask):
 
 
 	@agnosticmethod
+	def compare_features(self, fake, real):
+		return self.feature_criterion.compute_metric(fake, real)
+
+
+	@agnosticmethod
 	def _compare_features(self, info):
-		info[self.score_key] = self.feature_criterion.compute_metric(info[self.fake_features_key],
-		                                                             info[self.real_features_key])
+		info[self.score_key] = self.compare_features(info[self.fake_features_key], info[self.real_features_key])
 		return info
 
 

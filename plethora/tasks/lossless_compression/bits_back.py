@@ -26,22 +26,42 @@ prt = get_printer(__file__)
 
 
 class BitsBackCompressor:
-	def __init__(self, encoder, decoder, latent_shape=None, seed=None,
+	def __init__(self, encode_fn, decode_fn, seed=None, obs_shape=None, latent_shape=None,
+	             encoder_in_shape=None, decoder_in_shape=None,
+	             device=None, encoder_device=None, decoder_device=None,
 	             output_distribution='beta', beta_confidence=1000, default_scale=0.1,
 	             obs_precision=14, q_precision=14, prior_precision=8):
-		if latent_shape is None:
-			latent_shape = getattr(encoder, 'latent_dim', encoder.dout)
-
-			if isinstance(latent_shape, int):
-				latent_shape = 1, latent_shape
+		# if latent_shape is None:
+		# 	latent_shape = getattr(encoder, 'latent_dim', encoder.dout)
+		# 	if isinstance(latent_shape, int):
+		# 		latent_shape = 1, latent_shape
+		if isinstance(obs_shape, int):
+			obs_shape = obs_shape,
+		if isinstance(latent_shape, int):
+			latent_shape = latent_shape,
+		if encoder_in_shape is None:
+			encoder_in_shape = obs_shape
+		if decoder_in_shape is None:
+			decoder_in_shape = latent_shape
+		self.enc_in_shape, self.dec_in_shape = encoder_in_shape, decoder_in_shape
+		if len(latent_shape) == 1:
+			latent_shape = (1, *latent_shape)
 		latent_dim = np.product(latent_shape).item()
+
+		if device is None:
+			device = 'cuda' if torch.cuda.is_available() else 'cpu'
+		if encoder_device is None:
+			encoder_device = device
+		if decoder_device is None:
+			decoder_device = device
+		self.enc_device, self.dec_device = encoder_device, decoder_device
 
 		# self.state = None
 		self.start_seed_len = latent_dim
 		self.rng = np.random.RandomState(seed)
 
-		self.encoder = encoder
-		self.decoder = decoder
+		self.encode = encode_fn
+		self.decode = decode_fn
 
 		rec_net = tvae_utils.torch_fun_to_numpy_fun(self._wrapped_encode)
 		gen_net = tvae_utils.torch_fun_to_numpy_fun(self._wrapped_decode)
@@ -66,9 +86,11 @@ class BitsBackCompressor:
 
 
 	def _wrapped_encode(self, x):
-		x = x.to(self.encoder.get_device()).div(255).view(-1, *self.encoder.din)#.unsqueeze(0)
+		x = x.to(self.enc_device).div(255).view(-1, *self.enc_in_shape)
+		# x = x.to(self.encoder.get_device()).div(255).view(-1, *self.encoder.din)#.unsqueeze(0)
 		with torch.no_grad():
-			z = self.encoder.encode(x)
+			# z = self.encoder.encode(x)
+			z = self.encode(x)
 		if isinstance(z, Normal):
 			return z.loc.cpu(), z.scale.cpu()
 		mu = z.cpu()
@@ -76,9 +98,11 @@ class BitsBackCompressor:
 
 
 	def _wrapped_decode(self, z):
-		z = z.to(self.decoder.get_device()).unsqueeze(0)
+		z = z.to(self.dec_device).unsqueeze(0)
+		# z = z.to(self.decoder.get_device()).unsqueeze(0)
 		with torch.no_grad():
-			x = self.decoder.decode(z)
+			# x = self.decoder.decode(z)
+			x = self.decode(z)
 		x = x.cpu().view(z.size(0), -1)
 		if self._output_distribution == 'beta':
 			x = self._compute_beta_params(x)

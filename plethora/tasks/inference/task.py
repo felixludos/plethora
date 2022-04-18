@@ -63,7 +63,7 @@ class InferenceTask(DownstreamTask):
 
 	@hparam(cache=True)
 	def estimator(self):
-		return self.builder(source=self.dataset)
+		return self.builder(source=self.train_dataset)
 
 
 	@agnosticmethod
@@ -118,8 +118,13 @@ class InferenceTask(DownstreamTask):
 
 
 	@agnosticmethod
+	def fit(self, dataset):
+		return self.estimator.fit(dataset)
+
+
+	@agnosticmethod
 	def _train(self, info):
-		out = self.estimator.fit(self.train_dataset)
+		out = self.fit(self.train_dataset)
 		info.merge_results(out)
 		if 'score' in out:
 			info[self.train_score_key] = out['score']
@@ -127,8 +132,13 @@ class InferenceTask(DownstreamTask):
 
 
 	@agnosticmethod
+	def evaluate(self, dataset):
+		return self.estimator.evaluate(dataset)
+
+
+	@agnosticmethod
 	def _eval(self, info):
-		out = self.estimator.evaluate(self.eval_dataset)
+		out = self.evaluate(self.eval_dataset)
 		info.merge_results(out)
 		info[self.score_key] = out['score']
 		return info

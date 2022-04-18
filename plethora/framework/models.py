@@ -3,7 +3,7 @@
 import torch
 from omnibelt import agnosticmethod, unspecified_argument#, mix_into
 from .features import Seeded
-from .hyperparameters import Parametrized, ModuleParametrized
+from .hyperparameters import Parametrized, ModuleParametrized, hparam, inherit_hparams
 from .base import Function, Container
 
 
@@ -62,13 +62,13 @@ class Resultable:
 			self.update(info)
 
 
-		def _load_missing(self, key, sel=None, **kwargs):
-			return self.source.get(key, sel=sel, **kwargs)
+		def _load_missing(self, key, **kwargs):
+			return self.source.get(key, **kwargs)
 
 
 		def _find_missing(self, key, **kwargs):
 			if key == 'score':
-				if self.score_key is None:
+				if self._score_key is None:
 					raise self.NoScoreKeyError
 				return self[self._score_key]
 			if self.source is not None:
@@ -102,12 +102,21 @@ class Resultable:
 
 
 
-class Buildable:
-	def __init_subclass__(cls, builder=None, **kwargs):
-		super().__init_subclass__(**kwargs)
-		if builder is None:
-			builder = cls.Builder(cls)
-		cls.builder = builder
+class Buildable(ModuleParametrized): # TODO: unify building and hparams - they should be shared
+	# def __init_subclass__(cls, builder=None, **kwargs):
+	# 	super().__init_subclass__(**kwargs)
+	# 	if builder is None:
+	# 		builder = cls.Builder(cls)
+	# 	cls.builder = builder
+
+	# _my_build_settings = {} # in a sub-class of Buildable
+
+
+	@agnosticmethod
+	def get_builder(self, cls=None, **kwargs):
+		if cls is None:
+			cls = self if isinstance(self, type) else self.__class__
+		return self.Builder(cls=cls, **kwargs)
 
 
 	class Builder(ModelBuilder):
@@ -115,6 +124,7 @@ class Buildable:
 			super().__init__(**kwargs)
 			if cls is None:
 				raise self.MissingSourceClassError
+			self.update(**{key:getattr(cls, key) for key in cls.iterate_hparams()})
 			self.cls = cls
 
 
@@ -124,14 +134,15 @@ class Buildable:
 				                 '(use cls.builder instead)')
 
 
-		def build(self):
-			kwargs = self.__dict__.copy()
-			del kwargs['cls']
+		def build(self, kwargs=None):
+			if kwargs is None:
+				kwargs = self.__dict__.copy()
+				del kwargs['cls']
 			return self.cls(**kwargs)
 
 
 
-class Computable(Parametrized, Resultable):
+class Computable(ModuleParametrized, Resultable):
 	@agnosticmethod
 	def compute(self, source=None, **kwargs):
 		info = self.create_results_container(source=source, **kwargs)
@@ -154,7 +165,7 @@ class Fitable(Resultable):
 
 
 
-class Model(ModuleParametrized, Fitable, Buildable):
+class Model(Buildable, Fitable):
 
 	@agnosticmethod
 	def create_fit_results_container(self, **kwrags):

@@ -44,21 +44,38 @@ class ReconstructionTask(AbstractReconstructionTask):
 
 
 	@agnosticmethod
+	def encode(self, observation):
+		if self.encoder is None:
+			return observation
+		return self.encoder(observation)
+
+
+	@agnosticmethod
+	def decode(self, latent):
+		return self.decoder.decode(latent)
+
+
+	@agnosticmethod
+	def compare(self, observation, reconstruction):
+		return self.criterion.compare(observation, reconstruction)
+
+
+	@agnosticmethod
 	def _encode_step(self, info):
 		observation = info[self.observation_key]
-		info[self.latent_key] = observation if self.encoder is None else self.encoder.encode(observation)
+		info[self.latent_key] = self.encode(observation)
 		return info
 	
 	
 	@agnosticmethod
 	def _decode_step(self, info):
-		info[self.reconstruction_key] = self.decoder.decode(info[self.latent_key])
+		info[self.reconstruction_key] = self.decode(info[self.latent_key])
 		return info
 
 
 	@agnosticmethod
 	def _compare_step(self, info):
-		info[self.scores_key] = self.criterion.compare(info[self.reconstruction_key], info[self.observation_key])
+		info[self.scores_key] = self.compare(info[self.reconstruction_key], info[self.observation_key])
 		return info
 
 

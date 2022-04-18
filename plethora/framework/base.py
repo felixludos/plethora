@@ -219,10 +219,12 @@ class Container(Device, OrderedDict):
 		pass
 
 	def __getitem__(self, item):
-		if item not in self:
-			val = self._find_missing(item)
-			self[item] = val
-		return super().__getitem__(item)
+		try:
+			return super().__getitem__(item)
+		except KeyError:
+			return self._find_missing(item)
+			# self[item] = val
+			# return val
 
 
 	def export(self):

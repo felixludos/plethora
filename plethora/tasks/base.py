@@ -23,8 +23,8 @@ class Task(Computable): # TODO: specify random seed for reproducibility
 	def _extract_hparams(self, kwargs):
 		remaining = super()._extract_hparams(kwargs)
 		if self.auto_update_attrs:
-			for key, val in remaining:
-				setattr(self, key, val)
+			for key in list(remaining.keys()):
+				setattr(self, key, remaining[key])
 				del remaining[key]
 		return remaining
 
@@ -125,6 +125,7 @@ class Cumulative(BatchedTask.ResultsContainer):
 	def __init__(self, **kwargs):
 		super().__init__(**kwargs)
 		self._auto_cumulative_keys = self._auto_cumulative_keys.copy()
+		# self._auto_cumulative_keys = set()
 		self._cumulatives = {}
 
 
@@ -146,8 +147,9 @@ class Cumulative(BatchedTask.ResultsContainer):
 
 
 	def new_source(self, source): # auto accumulate
-		super().new_source(source)
 		self.auto_accumulate()
+		super().new_source(source)
+
 
 
 	def clear_cumulatives(self):
@@ -159,9 +161,9 @@ class Cumulative(BatchedTask.ResultsContainer):
 
 
 	def aggregate(self, key, stack=False):
-		if key not in self._cumulatives:
+		if key not in self._cumulatives and (key not in self._auto_cumulative_keys or key not in self):
 			raise self.MissingCumulative(key)
-		elms = [torch.as_tensor(x) for x in self._cumulatives]
+		elms = [torch.as_tensor(x) for x in self._cumulatives.get(key, [])]
 		if key in self._auto_cumulative_keys and key in self: # automatically add last batch (fence-post problem)
 			elms.append(torch.as_tensor(self[key]))
 		return torch.stack(elms) if stack or len(elms[0].shape) == 0 else torch.cat(elms)

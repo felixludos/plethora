@@ -46,11 +46,54 @@ def _download_community_directory(name, path, src_desc=None, silent=False):
 import torch
 from tqdm import tqdm
 
+from omnilearn import models
 from .datasets import MNIST
+from .framework import Criterion
 from .framework.extractors import Timm_Extractor
+from .tasks import ReconstructionTask
 
 @fig.Script('test')
 def _test_script(A):
+
+	device = 'cuda'
+
+	dataset = MNIST(batch_device=device)
+	len(dataset), dataset.din, dataset.dout
+	dataset.prepare();
+	batch = dataset.get_batch()
+	len(batch)
+	# obs = batch.get('observation')
+	# obs.shape
+
+	class MSE(Criterion):
+		@staticmethod
+		def compare(a, b):
+			return a.sub(b).pow(2).view(a.size(0), -1).mean(-1)
+
+	enc = models.make_MLP((1,32,32), 10).to(device)
+	enc.encode = enc.forward
+
+	dec = models.make_MLP(10, (1,32,32)).to(device)
+	dec.decode = dec.forward
+
+	criterion = MSE()
+
+
+	task = ReconstructionTask(dataset=dataset, pbar=tqdm,
+	                          num_samples=1000, batch_size=100,
+	                          encoder=enc, decoder=dec, criterion=criterion)
+
+	# out = task.compute(batch)
+
+	out = task.compute()
+
+	print(out['score'])
+
+	print(out.keys())
+
+
+	return
+
 	dataset = MNIST()
 	
 	model = Timm_Extractor('mobilenetv3_large_100', din=dataset.space_of('observation'))

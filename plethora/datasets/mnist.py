@@ -68,12 +68,12 @@ class Torchvision_Toy_Dataset(SupervisedDataset, ImageDataset):
 			images = images.permute(0,3,1,2)
 		if self.resize:
 			images = F.interpolate(images.float(), (32, 32), mode='bilinear').round().byte()
-		self.buffers['observation'].set_data(images)
+		self.buffers['observation'].data = images
 
 		targets = getattr(src, self._target_attr)
 		if not isinstance(targets, torch.Tensor):
 			targets = torch.as_tensor(targets)
-		self.buffers['target'].set_data(targets)
+		self.buffers['target'].data = targets
 
 		super()._prepare(*args, **kwargs)
 

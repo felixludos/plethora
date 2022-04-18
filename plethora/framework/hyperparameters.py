@@ -1,10 +1,17 @@
 import inspect
 
+import logging
 from omnibelt import get_printer, unspecified_argument, agnosticmethod, classdescriptor, ClassDescriptable
 
 from .util import spaces
 
-prt = get_printer(__file__)
+# prt = get_printer(__file__, format='%(levelname)s: %(msg)s')
+
+prt = logging.Logger('Hyperparameters')
+ch = logging.StreamHandler()
+ch.setFormatter(logging.Formatter('%(levelname)s: %(msg)s'))
+ch.setLevel(0)
+prt.addHandler(ch)
 
 
 
@@ -198,7 +205,7 @@ class ModuleParametrized(Parametrized):
 		class InvalidInstance(Hyperparameter.InvalidValue):
 			def __init__(self, name, value, base, msg=None):
 				if msg is None:
-					msg = f'{name}: {value} (should be an instance of {base})'
+					msg = f'{name}: {value} (expecting an instance of {base})'
 				super().__init__(name, value, msg=msg)
 				self.base = base
 
@@ -244,7 +251,7 @@ class hparam:
 		if self.default is not unspecified_argument:
 			self.kwargs['default'] = self.default
 		self.kwargs['space'] = self.space
-		self.kwargs['fget'] = self.fn
+		self.kwargs['fget'] = getattr(self, 'fn', None)
 		self.name = name
 		setattr(obj, name, obj.register_hparam(name, **self.kwargs))
 

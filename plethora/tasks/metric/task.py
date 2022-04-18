@@ -49,10 +49,30 @@ class MetricTask(AbstractMetricTask):
 	criterion = hparam(module=models.Criterion)
 	dataset = hparam(module=dataset_base.SyntheticDataset)
 
+
+	@property
+	def encode(self):
+		return (lambda x: x) if self.encoder is None else self.encoder.encode
+
+
+	@property
+	def measure(self):
+		return self.metric.measure
+
+
+	@property
+	def true_measure(self):
+		return self.dataset.distance
+
+
+	@property
+	def compare(self):
+		return self.criterion.compare
+
+
 	@agnosticmethod
 	def _encode_step(self, info):
-		info[self.latent_key] = info[self.observation_key] if self.encoder is None \
-			else self.encoder.encode(info[self.observation_key])
+		info[self.latent_key] = self.encode(info[self.observation_key])
 		return info
 
 
@@ -65,7 +85,7 @@ class MetricTask(AbstractMetricTask):
 	def _measure_distance(self, info):
 		code = info[self.latent_key]
 		a, b = self._split_samples(code)
-		distance = self.metric.measure(a, b)
+		distance = self.measure(a, b)
 		info[self.distance_key] = distance#.squeeze()
 		return info
 
@@ -74,7 +94,7 @@ class MetricTask(AbstractMetricTask):
 	def _true_distance(self, info):
 		labels = info[self.mechanism_key]
 		a, b = self._split_samples(labels)
-		info[self.true_distance_key] = self.dataset.distance(a,b)#.squeeze()
+		info[self.true_distance_key] = self.true_measure(a,b)#.squeeze()
 		return info
 
 
@@ -102,7 +122,7 @@ class MetricTask(AbstractMetricTask):
 		
 		distances = info.aggregate(self.distance_key)
 		true_distances = info.aggregate(self.true_distance_key)
-		agreement = self.criterion(distances, true_distances)
+		agreement = self.compare(distances, true_distances)
 
 		info.update({
 			self.distance_key: distances,

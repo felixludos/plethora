@@ -7,7 +7,7 @@ import torch
 from omnibelt import unspecified_argument, duplicate_instance, md5, agnosticmethod
 import h5py as hf
 
-from ..framework import base, Rooted, Named
+from ..framework import base, Rooted, Named, Device
 from .buffers import AbstractFixedBuffer, Buffer, BufferView, HDFBuffer, \
 	AbstractCountableData, AbstractCountableDataView
 
@@ -61,6 +61,12 @@ class Epoched(AbstractCountableData, Batchable, base.Seeded): # TODO: check Seed
 		self._shuffle_batches = shuffle_batches
 		self._batch_device = batch_device
 		self._infinite = infinite
+
+
+	def create_batch(self, sel=None, device=unspecified_argument, **kwargs):
+		if device is unspecified_argument:
+			device = self._batch_device
+		return super().create_batch(sel=sel, device=device, **kwargs)
 
 
 	def get_batch(self, shuffle=None, **kwargs):
@@ -429,10 +435,11 @@ class CachedView(SourceView, base.Container):
 		return super(base.AbstractData, self).update(other)
 
 
-	def get(self, name, default=None, sel=None, **kwargs):
+	def get(self, name, default=None, **kwargs):
 		if self.is_cached(name):
-			return super(base.AbstractData).get(name, default)
+			return super(base.AbstractData, self).get(name, default)
 		elif name in self:
+			sel = self.sel
 			val = super().get(name, sel=sel, **kwargs)
 			if self.device is not None:
 				val = val.to(self.device)
@@ -689,7 +696,7 @@ class LabeledDataset(SupervisedDataset):
 			gen = torch.Generator().manual_seed(seed)
 		if gen is None:
 			gen = self.gen
-		return self.get_label_space().sample(N, seed=seed, gen=gen)
+		return self.label_space.sample(N, seed=seed, gen=gen)
 
 
 	def generate_observation_from_label(self, label, seed=None, gen=None):
@@ -726,25 +733,25 @@ class SyntheticDataset(LabeledDataset):
 	def transform_to_mechanisms(self, data):
 		if not self._distinct_mechanisms:
 			return data
-		return self.get_mechanism_space().transform(data, self.get_label_space())
+		return self.mechanism_space.transform(data, self.label_space)
 
 
 	def transform_to_labels(self, data):
 		if not self._distinct_mechanisms:
 			return data
-		return self.get_label_space().transform(data, self.get_mechanism_space())
+		return self.label_space.transform(data, self.mechanism_space)
 
 
 	def difference(self, a, b, standardize=None): # TODO: link to metric space
 		if standardize is None:
 			standardize = self._standardize_scale
-		return self.get_mechanism_space().difference(a, b, standardize=standardize)
+		return self.mechanism_space.difference(a, b, standardize=standardize)
 
 
 	def distance(self, a, b, standardize=None):  # TODO: link to metric space
 		if standardize is None:
 			standardize = self._standardize_scale
-		return self.get_mechanism_space().distance(a,b, standardize=standardize)
+		return self.mechanism_space.distance(a,b, standardize=standardize)
 
 
 	def generate_mechanism(self, N, seed=None, gen=None): # TODO: link with prior
@@ -752,7 +759,7 @@ class SyntheticDataset(LabeledDataset):
 			gen = torch.Generator().manual_seed(seed)
 		if gen is None:
 			gen = self.gen
-		return self.get_mechanism_space().sample(N, gen=gen)
+		return self.mechanism_space.sample(N, gen=gen)
 
 
 	def generate_observation_from_label(self, label, seed=None, gen=None):
