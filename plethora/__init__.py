@@ -55,6 +55,18 @@ from .tasks import ReconstructionTask
 @fig.Script('test')
 def _test_script(A):
 
+	# print(ReconstructionTask.criterion_name)
+	#
+	# print(ReconstructionTask.criterion)
+	#
+	# ReconstructionTask.criterion = 10
+	#
+	# task = ReconstructionTask()
+	#
+	# print(task)
+	#
+	# return
+
 	device = 'cuda'
 
 	dataset = MNIST(batch_device=device)
@@ -65,27 +77,22 @@ def _test_script(A):
 	# obs = batch.get('observation')
 	# obs.shape
 
-	class MSE(Criterion):
-		@staticmethod
-		def compare(a, b):
-			return a.sub(b).pow(2).view(a.size(0), -1).mean(-1)
-
 	enc = models.make_MLP((1,32,32), 10).to(device)
 	enc.encode = enc.forward
 
-	dec = models.make_MLP(10, (1,32,32)).to(device)
+	dec = models.make_MLP(10, (1,32,32), output_nonlin='sigmoid').to(device)
 	dec.decode = dec.forward
 
-	criterion = MSE()
+	# criterion = MSE()
 
 
-	task = ReconstructionTask(dataset=dataset, pbar=tqdm,
-	                          num_samples=1000, batch_size=100,
-	                          encoder=enc, decoder=dec, criterion=criterion)
+	task = ReconstructionTask(dataset=dataset, pbar=tqdm, criterion_name='gmsd',
+	                          num_samples=512, batch_size=16,
+	                          encoder=enc, decoder=dec)
 
-	# out = task.compute(batch)
-
-	out = task.compute()
+	with torch.no_grad():
+		# out = task.compute(batch)
+		out = task.compute()
 
 	print(out['score'])
 

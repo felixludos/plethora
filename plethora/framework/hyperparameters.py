@@ -23,7 +23,7 @@ class Hyperparameter(property, classdescriptor):
 			assert fget is not None, 'No name provided'
 			name = fget.__name__
 		self.name = name
-		self.value = self._missing
+		self.cls_value = self._missing
 		self.default = default
 		self.cache = cache
 		if space is not None and isinstance(space, (list, tuple, set)):
@@ -49,8 +49,30 @@ class Hyperparameter(property, classdescriptor):
 		return self
 
 
-	def copy(self):
-		raise NotImplementedError # TODO
+	def copy(self, name=unspecified_argument, fget=unspecified_argument, default=unspecified_argument,
+	         required=unspecified_argument, strict=unspecified_argument, cache=unspecified_argument,
+	         fixed=unspecified_argument, space=unspecified_argument, **kwargs):
+
+		if name is unspecified_argument:
+			name = self.name
+		if fget is unspecified_argument:
+			fget = self.fget
+		if default is unspecified_argument:
+			default = self.default
+		if required is unspecified_argument:
+			required = self.required
+		if strict is unspecified_argument:
+			strict = self.strict
+		if cache is unspecified_argument:
+			cache = self.cache
+		if fixed is unspecified_argument:
+			fixed = self.fixed
+		if space is unspecified_argument:
+			space = self.space
+		copy = self.__class__(name=name, fget=fget, default=default, required=required, strict=strict, cache=cache,
+		                      fixed=fixed, space=space, **kwargs)
+		# copy.value = self.value
+		return copy
 
 
 	class _missing(Exception):
@@ -71,17 +93,21 @@ class Hyperparameter(property, classdescriptor):
 
 
 	def reset(self, obj=None):
-		self.value = self._missing
-		if self.fdel is not None and obj is not None:
+		if obj is None:
+			self.cls_value = self._missing
+		elif self.fdel is not None:
 			super().__delete__(obj)
+		elif not isinstance(obj, type) and self.name in obj.__dict__:
+			del obj.__dict__[self.name]
 
 
 	def __str__(self):
 		try:
 			value = self.get_value()
+			value = repr(value)
 		except self.MissingHyperparameter:
 			value = '?'
-		return f'{self.__class__}({value})'
+		return f'{self.__class__.__name__}({value})'#<{hex(id(self))[2:]}>' # TODO: testing
 
 
 	def __get__(self, obj, cls=None):
@@ -89,24 +115,36 @@ class Hyperparameter(property, classdescriptor):
 
 
 	def __delete__(self, obj): # TODO: test this
-		self.reset()
+		self.reset(obj=obj)
 
 
 	def __set__(self, obj, value):
 		self.update_value(value, obj=obj)
-		return self
+		# return self.cls_value
+
+
+	def _custom_getter(self, obj, cls):
+		try:
+			return super().__get__(obj, cls)
+		except Hyperparameter.MissingHyperparameter:
+			raise self.MissingHyperparameter(self.name)
 
 
 	def get_value(self, obj=None, cls=None):
-		if self.value is not self._missing:
-			return self.value
 		if obj is not None:
-			try:
-				value = super().__get__(obj, cls)
-			except Hyperparameter.MissingHyperparameter:
-				raise self.MissingHyperparameter(self.name)
+			if self.name in obj.__dict__:
+				return obj.__dict__[self.name]
+			if self.fget is not None:
+				value = self._custom_getter(obj, cls)
+				if self.cache:
+					obj.__dict__[self.name] = value
+				return value
+		elif self.cls_value is not self._missing:
+			return self.cls_value
+		elif self.fget is not None:
+			value = self._custom_getter(cls, cls) # "class property"
 			if self.cache:
-				self.value = value
+				self.cls_value = value
 			return value
 		if self.required or self.default is unspecified_argument:
 			raise self.MissingHyperparameter(self.name)
@@ -135,11 +173,12 @@ class Hyperparameter(property, classdescriptor):
 			if self.strict:
 				raise e
 			prt.warning(f'{type(e).__name__}: {e}')
-		if self.fset is not None and obj is not None:
-			self.reset()
-			return super().__set__(obj, value)
+		if isinstance(obj, type): # "updating" the class variable
+			self.cls_value = value
 		else:
-			self.value = value
+			if self.fset is not None: # use user-defined setter
+				return super().__set__(obj, value)
+			obj.__dict__[self.name] = value
 		return value
 
 
@@ -150,11 +189,16 @@ class Parametrized(metaclass=ClassDescriptable):
 
 
 	def _extract_hparams(self, kwargs):
-		for key in self.iterate_hparams():
+		for key, val in self.iterate_hparams(items=True):
+			if key in kwargs:
+				setattr(self, key, kwargs[key])
+				del kwargs[key]
+		for key, val in self.__class__.iterate_hparams(items=True):
 			if key in kwargs:
 				setattr(self, key, kwargs[key])
 				del kwargs[key]
 		return kwargs
+	# id(newval), id(val), id(inspect.getattr_static(self, 'encoder')), id(inspect.getattr_static(self.__class__, 'encoder'))
 
 
 	Hyperparameter = Hyperparameter
@@ -174,15 +218,16 @@ class Parametrized(metaclass=ClassDescriptable):
 
 	@agnosticmethod
 	def iterate_hparams(self, items=False, **kwargs):
-		for key, val in self.__dict__.items():
+		cls = self if isinstance(self, type) else self.__class__
+		for key, val in cls.__dict__.items():
 			if isinstance(val, Hyperparameter):
 				yield (key, val) if items else key
-		if not isinstance(self, type):
-			yield from self.__class__.iterate_hparams(items=items, **kwargs)
+		# if not isinstance(self, type):
+		# 	yield from self.__class__.iterate_hparams(items=items, **kwargs)
 
 
 	@agnosticmethod
-	def inherit_hparams(self, *names, copy=False, strict=False):
+	def inherit_hparams(self, *names, copy=True, strict=False):
 		for name in names:
 			hparam = inspect.getattr_static(self, name, unspecified_argument)
 			if hparam is unspecified_argument:
@@ -191,7 +236,8 @@ class Parametrized(metaclass=ClassDescriptable):
 			else:
 				if copy:
 					hparam = hparam.copy()
-				setattr(self, name, hparam)
+				self.__dict__[name] = hparam
+				# setattr(self, name, hparam)
 
 
 
@@ -241,6 +287,7 @@ class hparam:
 
 	def __call__(self, fn):
 		self.fn = fn
+		return self
 
 
 	def __get__(self, instance, owner): # TODO: this is just for linting, right?

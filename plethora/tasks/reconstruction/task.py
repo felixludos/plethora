@@ -2,6 +2,7 @@ import torch
 from omnibelt import get_printer, agnosticmethod
 from ...framework import models, hparam, inherit_hparams
 from ..base import Task, BatchedTask, SimpleEvaluationTask
+from .criteria import get_criterion
 
 prt = get_printer(__file__)
 
@@ -40,7 +41,12 @@ class ReconstructionTask(AbstractReconstructionTask):
 	
 	encoder = hparam(default=None, module=models.Encoder)
 	decoder = hparam(module=models.Decoder)
-	criterion = hparam(module=models.Criterion)
+
+	criterion_name = hparam('ms-ssim')
+
+	@hparam(cache=True, module=models.Criterion)
+	def criterion(self):
+		return get_criterion(self.criterion_name)()
 
 
 	@agnosticmethod
