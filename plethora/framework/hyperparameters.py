@@ -184,7 +184,10 @@ class Hyperparameter(property, classdescriptor):
 
 
 class Parametrized(metaclass=ClassDescriptable):
+	_inherited_hparams = set()
+
 	def __init__(self, *args, **kwargs):
+		self._inherited_hparams = self._inherited_hparams.copy()
 		super().__init__(*args, **self._extract_hparams(kwargs))
 
 
@@ -219,38 +222,51 @@ class Parametrized(metaclass=ClassDescriptable):
 	@agnosticmethod
 	def iterate_hparams(self, items=False, **kwargs):
 		cls = self if isinstance(self, type) else self.__class__
+		done = set()
 		for key, val in cls.__dict__.items():
-			if isinstance(val, Hyperparameter):
+			if key not in done and isinstance(val, Hyperparameter):
+				done.add(key)
 				yield (key, val) if items else key
+		for key in self._inherited_hparams:
+			val = inspect.getattr_static(self, key, unspecified_argument)
+			# val = getattr(self, key, None)
+			if key not in done and isinstance(val, Hyperparameter):
+				done.add(key)
+				yield (key, val) if items else key
+
 		# if not isinstance(self, type):
 		# 	yield from self.__class__.iterate_hparams(items=items, **kwargs)
 
 
 	@agnosticmethod
-	def inherit_hparams(self, *names, copy=True, strict=False):
-		for name in names:
-			hparam = inspect.getattr_static(self, name, unspecified_argument)
-			if hparam is unspecified_argument:
-				if strict:
-					raise self.Hyperparameter.MissingHyperparameter(name)
-			else:
-				if copy:
-					hparam = hparam.copy()
-				self.__dict__[name] = hparam
+	def inherit_hparams(self, *names):
+		self._inherited_hparams.update(names)
+		# for name in names:
+		# 	hparam = inspect.getattr_static(self, name, unspecified_argument)
+		# 	if hparam is unspecified_argument:
+		# 		if strict:
+		# 			raise self.Hyperparameter.MissingHyperparameter(name)
+		# 	else:
+		# 		if copy:
+		# 			hparam = hparam.copy()
+		# 		self.__dict__[name] = hparam
 				# setattr(self, name, hparam)
 
 
 
 class ModuleParametrized(Parametrized):
 	class Hyperparameter(Parametrized.Hyperparameter):
-		def __init__(self, default=unspecified_argument, required=True, module=None, cache=False, **kwargs):
-			super().__init__(default=default, required=required, cache=cache or module is not None, **kwargs)
+		def __init__(self, default=unspecified_argument, required=True, module=None, cache=None, **kwargs):
+			if cache is None:
+				cache = module is not None
+			super().__init__(default=default, required=required, cache=cache, **kwargs)
 			self.module = module
 
 
 		class InvalidInstance(Hyperparameter.InvalidValue):
 			def __init__(self, name, value, base, msg=None):
 				if msg is None:
+					value = type(value) if isinstance(value, type) else str(value)
 					msg = f'{name}: {value} (expecting an instance of {base})'
 				super().__init__(name, value, msg=msg)
 				self.base = base
@@ -263,15 +279,13 @@ class ModuleParametrized(Parametrized):
 
 
 class inherit_hparams:
-	def __init__(self, *names, copy_hparam=False, strict=False, **kwargs):
+	def __init__(self, *names, **kwargs):
 		self.names = names
-		self.copy_hparams = copy_hparam
-		self.strict = strict
 		self.kwargs = kwargs
 
 
 	def __call__(self, cls):
-		cls.inherit_hparams(*self.names, copy_hparms=self.copy_hparams, strict=self.strict, **self.kwargs)
+		cls.inherit_hparams(*self.names, **self.kwargs)
 		return cls
 
 
@@ -283,10 +297,23 @@ class hparam:
 		self.name = None
 		self.space = space
 		self.kwargs = kwargs
+		self.fget = None
+		self.fset = None
+		self.fdel = None
+
+
+	def setter(self, fn):
+		self.fset = fn
+		return self
+
+
+	def deleter(self, fn):
+		self.fdel = fn
+		return self
 
 
 	def __call__(self, fn):
-		self.fn = fn
+		self.fget = fn
 		return self
 
 
@@ -298,7 +325,9 @@ class hparam:
 		if self.default is not unspecified_argument:
 			self.kwargs['default'] = self.default
 		self.kwargs['space'] = self.space
-		self.kwargs['fget'] = getattr(self, 'fn', None)
+		self.kwargs['fget'] = getattr(self, 'fget', None)
+		self.kwargs['fset'] = getattr(self, 'fset', None)
+		self.kwargs['fdel'] = getattr(self, 'fdel', None)
 		self.name = name
 		setattr(obj, name, obj.register_hparam(name, **self.kwargs))
 

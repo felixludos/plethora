@@ -3,9 +3,9 @@ from omnibelt import get_printer, unspecified_argument, agnosticmethod
 from ...framework.util import spaces
 from ...framework import models, hparam, inherit_hparams
 from ..base import Task, BatchedTask, SimpleEvaluationTask
-from ...datasets.base import EncodableDataset, BufferView, SupervisedDataset
+from ...datasets.base import EncodableDataset, BufferView, SupervisedDataset, DataSource
 
-from .estimators import GradientBoostingBuilder
+from .estimators import GradientBoostingWrapperBuilder
 
 prt = get_printer(__file__)
 
@@ -16,7 +16,7 @@ class DownstreamTask(Task):
 	encoder = hparam(default=None, module=models.Extractor)
 
 
-	@hparam(cache=True)
+	@hparam(cache=True, module=DataSource)
 	def dataset(self):
 		return self._wrap_dataset(self._dataset, self.encoder)
 	@dataset.setter # TODO: fix linting issue
@@ -29,8 +29,8 @@ class DownstreamTask(Task):
 		if encoder is None:
 			encoder = self.encoder
 		view = dataset.create_view()
-		view.register_buffer('observation', self.ObservationBuffer(encoder=encoder,
-		                                                     source=dataset.get_buffer('observation')))
+		view.register_buffer('observation', self.ObservationBuffer(encoder=encoder, max_batch_size=dataset.batch_size,
+		                                                     source=dataset.get_buffer('observation'),))
 		return view
 
 
@@ -39,6 +39,7 @@ class DownstreamTask(Task):
 		info = super().create_results_container(source=source, **kwargs)
 		if source is not None:
 			info.new_source(self._wrap_dataset(source, self.encoder))
+		return info
 
 
 
@@ -46,16 +47,24 @@ class DownstreamTask(Task):
 class InferenceTask(DownstreamTask):
 	train_score_key = 'train_score'
 
+	num_samples = None
 	shuffle_split = True
 	eval_split = hparam(0.2)
 
 	def __init__(self, **kwargs):
 		super().__init__(**kwargs)
-		self._train_dataset = None
-		self._eval_dataset = None
-	
+		self._train_dataset = [] # stack
+		self._eval_dataset = [] # stack
 
-	EstimatorBuilder = GradientBoostingBuilder # default builder using gradient boosting trees
+
+	ObservationBuffer = EncodableDataset.EncodedBuffer
+	def _wrap_dataset(self, dataset, encoder=None):
+		if self.num_samples is not None:
+			dataset = dataset.subset(self.num_samples, shuffle=True)
+		return super()._wrap_dataset(dataset, encoder=encoder)
+
+
+	EstimatorBuilder = GradientBoostingWrapperBuilder # default builder using gradient boosting trees
 	@hparam(cache=True)
 	def builder(self):
 		return self.EstimatorBuilder()
@@ -66,54 +75,54 @@ class InferenceTask(DownstreamTask):
 		return self.builder(source=self.train_dataset)
 
 
-	@agnosticmethod
-	def create_results_container(self, source=None, **kwargs):
-		info = super().create_results_container(source=source, **kwargs)
-		if info.source is not None:
-			self._split_dataset(info.source)
-		return info
-
-
-	@hparam()
+	@hparam()#module=DataSource)
 	def train_dataset(self):
-		if self._train_dataset is None:
+		if len(self._train_dataset) == 0:
 			self._split_dataset()
-		return self._train_dataset
+		return self._train_dataset[-1]
 	@train_dataset.deleter
 	def train_dataset(self):
-		self._train_dataset = None
+		self._train_dataset.clear()
 
 
-	@hparam()
+	@hparam()#module=DataSource)
 	def eval_dataset(self):
-		if self._eval_dataset is None:
+		if len(self._eval_dataset) == 0:
 			self._split_dataset()
-		return self._eval_dataset
+		return self._eval_dataset[-1]
 	@eval_dataset.deleter
 	def eval_dataset(self):
-		self._eval_dataset = None
+		self._eval_dataset.clear()
 
 
 	@agnosticmethod
 	def _split_dataset(self, source=None): # TODO maybe treat these as hparams
 		if source is None:
 			source = self.dataset
-		self._train_dataset, self._eval_dataset = source.split([None, self.eval_split], shuffle=self.shuffle_split,
-		                                                           register_modes=False)
+		train_dataset, eval_dataset = source.split([None, self.eval_split], shuffle=self.shuffle_split)
+		self._train_dataset.append(train_dataset)
+		self._eval_dataset.append(eval_dataset)
 
 
-	@agnosticmethod
-	def create_results_container(self, source=None, **kwargs):
-		info = super().create_results_container(source=source, **kwargs)
-		if source is not None:
-			self._split_dataset(source)
-		return info
+	# @agnosticmethod
+	# def create_results_container(self, **kwargs):
+	# 	info = super().create_results_container(**kwargs)
+	# 	if info.source is not None:
+	# 		info.train_dataset, info.eval_dataset = self._split_dataset(info.source)
+	# 	return info
 
 
 	@agnosticmethod
 	def _compute(self, info):
+		if info.source is not None:
+			self._split_dataset(info.source)
+
 		self._train(info)
 		self._eval(info)
+
+		if info.source is not None:
+			self._train_dataset.pop()
+			self._eval_dataset.pop()
 		return info
 
 

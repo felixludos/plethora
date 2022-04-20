@@ -50,11 +50,11 @@ from omnilearn import models
 from .datasets import MNIST
 from .framework import Criterion
 from .framework.extractors import Timm_Extractor
-from .tasks import ReconstructionTask
+from . import tasks
+# from .tasks import ReconstructionTask, FID_GenerationTask
 
 @fig.Script('test')
 def _test_script(A):
-
 	# print(ReconstructionTask.criterion_name)
 	#
 	# print(ReconstructionTask.criterion)
@@ -69,7 +69,7 @@ def _test_script(A):
 
 	device = 'cuda'
 
-	dataset = MNIST(batch_device=device)
+	dataset = MNIST(batch_device=device, batch_size=200)
 	len(dataset), dataset.din, dataset.dout
 	dataset.prepare();
 	batch = dataset.get_batch()
@@ -77,24 +77,42 @@ def _test_script(A):
 	# obs = batch.get('observation')
 	# obs.shape
 
+	extractor = Timm_Extractor('mobilenetv3_large_100', din=dataset.space_of('observation'))
+
 	enc = models.make_MLP((1,32,32), 10).to(device)
+	enc.device = device
 	enc.encode = enc.forward
 
 	dec = models.make_MLP(10, (1,32,32), output_nonlin='sigmoid').to(device)
+	dec.device = device
 	dec.decode = dec.forward
+
+	def generate(N, gen=None):
+		z = torch.randn(N, 10, generator=gen).to(device)
+		with torch.no_grad():
+			return dec(z)
+	dec.generate = generate
+
 
 	# criterion = MSE()
 
+	task = tasks.InferenceTask(dataset=dataset, pbar=tqdm, num_samples=1000,
+	                          encoder=enc)
 
-	task = ReconstructionTask(dataset=dataset, pbar=tqdm, criterion_name='gmsd',
-	                          num_samples=512, batch_size=16,
-	                          encoder=enc, decoder=dec)
+	# task = tasks.PR_GenerationTask(dataset=dataset, pbar=tqdm,
+	#                           num_samples=10000, batch_size=100,
+	#                           generator=dec, extractor=extractor)
+
+	# task = tasks.ReconstructionTask(dataset=dataset, pbar=tqdm, criterion_name='lpips',
+	#                           num_samples=1000, batch_size=100,
+	#                           encoder=enc, decoder=dec)
 
 	with torch.no_grad():
-		# out = task.compute(batch)
-		out = task.compute()
+		out = task.compute(batch)
+		print(out['score'])
 
-	print(out['score'])
+		out = task.compute()
+		print(out['score'])
 
 	print(out.keys())
 

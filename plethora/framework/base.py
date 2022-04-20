@@ -48,10 +48,24 @@ class AbstractData(Prepared): # application of Prepared
 
 
 	View = None
-	def create_view(self, **kwargs):
+	def create_view(self, source=None, **kwargs):
 		if self.View is None:
 			raise self.NoView
-		return self.View(source=self, **kwargs)
+		if source is None:
+			source = self
+		return self.View(source=source, **kwargs)
+
+
+	def _title(self):
+		raise NotImplementedError
+
+
+	def __str__(self):
+		return self._title()
+
+
+	def __repr__(self):
+		return str(self)
 
 
 
@@ -65,12 +79,14 @@ class AbstractView(AbstractData):
 
 
 	View = None
-	def create_view(self, **kwargs):
+	def create_view(self, source=None, **kwargs):
+		if source is None:
+			source = self
 		if self.View is None:
 			if self.source is None:
 				raise self.NoSource
-			return self.source.create_view(**kwargs)
-		return super().create_view(**kwargs)
+			return self.source.create_view(source=source, **kwargs)
+		return super().create_view(source=source, **kwargs)
 
 
 	def _merge_sel(self, sel=None):

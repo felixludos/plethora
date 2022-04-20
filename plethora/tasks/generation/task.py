@@ -27,7 +27,7 @@ class AbstractGenerationTask(BatchedTask):
 
 	@agnosticmethod
 	def _generate_step(self, info):
-		info[self.generated_key] = self.generate(info.batch.size, gen=info.gen)
+		info[self.generated_key] = self.generate(info.source.size(), gen=info.gen)
 		return info
 
 

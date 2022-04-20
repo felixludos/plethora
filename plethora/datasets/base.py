@@ -170,7 +170,6 @@ class Epoched(AbstractCountableData, Batchable, base.Seeded): # TODO: check Seed
 
 
 class DataSource(Batchable, base.AbstractData, Named):
-
 	class MissingBuffer(Exception):
 		pass
 
@@ -183,7 +182,7 @@ class DataSource(Batchable, base.AbstractData, Named):
 		raise NotImplementedError
 
 
-	def register_buffer(self, name, **kwargs):
+	def register_buffer(self, name, buffer, **kwargs):
 		raise NotImplementedError
 
 
@@ -213,6 +212,9 @@ class DataSource(Batchable, base.AbstractData, Named):
 
 	def _get(self, name, sel=None, **kwargs):
 		return self.get_buffer(name).get(sel)
+		buffer = self.get_buffer(name)
+		data = buffer.get(sel)
+		return data
 
 
 	def _prepare(self, *args, **kwargs):
@@ -220,14 +222,30 @@ class DataSource(Batchable, base.AbstractData, Named):
 			buffer.prepare()
 
 
+	def _title(self):
+		return self.name
+
+
 
 class SourceView(DataSource, base.AbstractView):
 	# _is_ready = True
 
+	View = None
+
+
+	def _title(self):
+		return '' if self.source is None else self.source._title()
+
+
 	def __str__(self):
-		src = '' if self.source is None else str(src)
-		src = '{' + src + '}'
-		return f'{super().__str__()}{src}'
+		src = '{' + self._title() + '}'
+		return f'{self.__class__.__name__}{src}'#"{hex(id(self))[2:]}"'
+
+
+	def get(self, name, sel=unspecified_argument, **kwargs):
+		if sel is unspecified_argument:
+			sel = self.sel
+		return super().get(sel=sel, name=name, **kwargs)
 
 
 	Batch = None
@@ -408,6 +426,7 @@ class CountableView(AbstractCountableDataView, Epoched, SourceView):
 		sel = self._merge_sel(sel)
 		return super().get_iterator(sel=sel, **kwargs)
 
+
 	def generate_selections(self, *, sel=None, **kwargs):
 		sel = self._merge_sel(sel)
 		return super().generate_selections(sel=sel, **kwargs)
@@ -460,22 +479,11 @@ Batchable.Batch = CachedView
 
 
 
-class Batch(CountableView, CachedView):
-	pass
-
-
-
 class DataCollection(MultiModed, BufferTable, DataSource):
-
-	def __str__(self):
+	def _title(self):
 		mode = self.mode
-		if mode is None:
-			mode = ''
-		return f'{super().__str__()}<{mode}>'
-
-
-	def __repr__(self):
-		return str(self)
+		mode = '' if mode is None else f'<{mode}>'
+		return f'{super()._title()}{mode}'
 
 
 	def _update(self, sel=None, **kwargs):
@@ -483,23 +491,8 @@ class DataCollection(MultiModed, BufferTable, DataSource):
 			buffer.update(sel=sel, **kwargs)
 
 
-	
-class Dataset(DataCollection, Epoched, AbstractCountableData):
-	def __init__(self, **kwargs):
-		super().__init__(**kwargs)
-		self._subset_src = None
-		self._waiting_subset = None
-		self._subset_indices = None
 
-
-	View = CountableView
-	Batch = Batch
-
-
-	def __str__(self):
-		return f'{super().__str__()}[{self.size()}]'
-
-
+class Subsetable(Epoched):
 	@staticmethod
 	def _split_indices(indices, cut):
 		assert cut != 0
@@ -515,44 +508,15 @@ class Dataset(DataCollection, Epoched, AbstractCountableData):
 		return part1, part2
 
 
-	@staticmethod
-	def _create_buffer_view(buffer, sel=None, **kwargs):
-		return buffer.create_view(sel=sel, **kwargs)
+	def subset(self, cut=None, sel=None, shuffle=False, hard_copy=True):
+		if sel is None:
+			sel, _ = self._split_indices(indices=self.shuffle_indices(self.size(), gen=self.gen)
+			if shuffle else torch.arange(self.size()), cut=cut)
+		return self.create_view(sel=sel)
 
 
-	@property
-	def is_subset(self):
-		return self._subset_src is not None
-
-
-	def get_subset_src(self, recursive=True):
-		if self._subset_src is None:
-			return self
-		return self._subset_src.get_subset_src(recursive=recursive) if recursive else self._subset_src
-
-
-	def subset(self, cut=None, indices=None, shuffle=False, src_ref=True):
-		if indices is None:
-			indices, _ = self._split_indices(indices=self.shuffle_indices(self.size(), gen=self.gen)
-										  if shuffle else torch.arange(self.size()), cut=cut)
-		new = self.copy()
-		if src_ref:
-			new._subset_src = self
-		new._default_len = len(indices)
-		for name, buffer in self.buffers.items():
-			new.register_buffer(name, self._create_buffer_view(buffer, sel=indices))
-		if self.mode is not None:
-			self.register_modes(**{self.mode: new})
-		return new
-
-
-	def _size(self):
-		return next(iter(self.buffers.values())).size()
-	
-	
-	def split(self, splits, shuffle=False, register_modes=False):
+	def split(self, splits, shuffle=False):
 		auto_name = isinstance(splits, (list, tuple, set))
-		register_modes = register_modes and not auto_name
 		if auto_name:
 			named_cuts = [(f'part{i}', r) for i, r in enumerate(splits)]
 		else:
@@ -560,7 +524,7 @@ class Dataset(DataCollection, Epoched, AbstractCountableData):
 			assert not any(x for x in splits if x is None), 'names of splits cannot be None'
 			named_cuts = list(splits.items())
 		names, cuts = zip(*sorted(named_cuts, key=lambda nr: (isinstance(nr[1], int), isinstance(nr[1], float),
-		                                                          nr[1] is None, nr[0]), reverse=True))
+		                                                      nr[1] is None, nr[0]), reverse=True))
 
 		remaining = self.size()
 		nums = []
@@ -576,13 +540,13 @@ class Dataset(DataCollection, Epoched, AbstractCountableData):
 						ratios.append(cut)
 						cut = next(itr, 'done')
 					if len(cuts):
-						rationums = [int(remaining*abs(ratio)) for ratio in ratios]
-						nums.extend([int(math.copysign(1, r)*n) for r, n in zip(ratios, rationums)])
+						rationums = [int(remaining * abs(ratio)) for ratio in ratios]
+						nums.extend([int(math.copysign(1, r) * n) for r, n in zip(ratios, rationums)])
 						remaining -= sum(rationums)
 				if cut is None:
 					pieces = len([cut, *itr])
 					assert remaining > pieces, f'cant evenly distribute {remaining} samples into {pieces} cuts'
-					evennums = [int(remaining//pieces) for _ in range(pieces)]
+					evennums = [int(remaining // pieces) for _ in range(pieces)]
 					nums.extend(evennums)
 					remaining -= sum(evennums)
 
@@ -596,13 +560,77 @@ class Dataset(DataCollection, Epoched, AbstractCountableData):
 		for name in sorted(names):
 			num = plan[name]
 			part, indices = self._split_indices(indices, num)
-			parts[name] = self.subset(indices=part)
-
-		if register_modes:
-			self.register_modes(**parts)
-
+			parts[name] = self.subset(sel=part)
 		if auto_name:
 			return [parts[name] for name, _ in named_cuts]
+		return parts
+
+
+
+class Batch(Subsetable, CountableView, CachedView):
+	pass
+
+
+
+class View(Subsetable, CountableView, ReplacementView):
+	pass
+
+
+
+class Dataset(Subsetable, DataCollection):
+	def __init__(self, **kwargs):
+		super().__init__(**kwargs)
+		self._subset_src = None
+	# 	# self._waiting_subset = None
+	# 	# self._subset_indices = None
+
+
+	View = View
+	Batch = Batch
+
+
+	# @property
+	# def is_subset(self):
+	# 	return self._subset_src is not None
+
+
+	def _size(self):
+		return next(iter(self.buffers.values())).size()
+
+
+	def get_subset_src(self, recursive=True):
+		if self._subset_src is None:
+			return self
+		return self._subset_src.get_subset_src(recursive=recursive) if recursive else self._subset_src
+
+
+	@staticmethod
+	def _create_buffer_view(buffer, sel=None, **kwargs):
+		return buffer.create_view(sel=sel, **kwargs)
+
+
+	def subset(self, cut=None, sel=None, shuffle=False, src_ref=True, hard_copy=True):
+		if hard_copy:
+			if sel is None:
+				sel, _ = self._split_indices(indices=self.shuffle_indices(self.size(), gen=self.gen)
+				if shuffle else torch.arange(self.size()), cut=cut)
+			new = self.copy()
+			if src_ref:
+				new._subset_src = self
+			new._default_len = len(sel)
+			for name, buffer in self.buffers.items():
+				new.register_buffer(name, self._create_buffer_view(buffer, sel=sel))
+		else:
+			new = super().subset(cut=cut, sel=sel, shuffle=shuffle)
+		if self.mode is not None:
+			self.register_modes(**{self.mode: new})
+		return new
+
+	
+	def split(self, splits, shuffle=False, register_modes=False):
+		parts = super().split(splits, shuffle=shuffle)
+		if register_modes and isinstance(splits, dict):
+			self.register_modes(**parts)
 		return parts
 
 
@@ -617,8 +645,7 @@ class SimpleDataset(Dataset):
 
 
 
-
-class ObservationDataset(Dataset):
+class _ObservationInfo(DataSource):
 	@property
 	def din(self):
 		return self.observation_space
@@ -633,21 +660,25 @@ class ObservationDataset(Dataset):
 		return self.get('observation', sel=sel, **kwargs)
 
 
-	def _prepare(self, *args, **kwargs):
-		super()._prepare()
-		if not self.has_buffer('observation'):
-			# TODO: warning: guessing observation buffer
-			assert len(self.buffers), 'cant find a buffer for the observations (did you forget to register it?)'
-			key = list(self.buffers.keys())[-1]
-			self.register_buffer('observation', self.get_buffer(key))
+
+class ObservationDataset(_ObservationInfo, Dataset):
+	class Batch(_ObservationInfo, Dataset.Batch):
+		pass
+	class View(_ObservationInfo, Dataset.View):
+		pass
 
 
-	# def __len__(self):
-	# 	return len(self.get_buffer('observation'))
+	# def _prepare(self, *args, **kwargs):
+	# 	super()._prepare()
+	# 	if not self.has_buffer('observation'):
+	# 		# TODO: warning: guessing observation buffer
+	# 		assert len(self.buffers), 'cant find a buffer for the observations (did you forget to register it?)'
+	# 		key = list(self.buffers.keys())[-1]
+	# 		self.register_buffer('observation', self.get_buffer(key))
 
 
 
-class SupervisedDataset(ObservationDataset):
+class _SupervisionInfo(_ObservationInfo):
 	@property
 	def dout(self):
 		return self.target_space
@@ -662,16 +693,24 @@ class SupervisedDataset(ObservationDataset):
 		return self.get('target', sel=sel, **kwargs)
 
 
-	def _prepare(self, *args, **kwargs):
-		super()._prepare()
-		if not self.has_buffer('target'):
-			# TODO: warning: guessing target buffer
-			key = list(self.buffers.keys())[0 if len(self.buffers) < 2 else -2]
-			self.register_buffer('target', self.get_buffer(key))
+
+class SupervisedDataset(_SupervisionInfo, ObservationDataset):
+	class Batch(_SupervisionInfo, ObservationDataset.Batch):
+		pass
+	class View(_SupervisionInfo, ObservationDataset.View):
+		pass
+
+
+	# def _prepare(self, *args, **kwargs):
+	# 	super()._prepare()
+	# 	if not self.has_buffer('target'):
+	# 		# TODO: warning: guessing target buffer
+	# 		key = list(self.buffers.keys())[0 if len(self.buffers) < 2 else -2]
+	# 		self.register_buffer('target', self.get_buffer(key))
 
 
 
-class LabeledDataset(SupervisedDataset):
+class _LabeledInfo(_SupervisionInfo):
 	@property
 	def label_space(self):
 		return self.space_of('label')
@@ -681,14 +720,22 @@ class LabeledDataset(SupervisedDataset):
 		return self.get('label', sel=sel, **kwargs)
 
 
+
+class LabeledDataset(_LabeledInfo, SupervisedDataset):
+	class Batch(_LabeledInfo, SupervisedDataset.Batch):
+		pass
+	class View(_LabeledInfo, SupervisedDataset.View):
+		pass
+
+
 	def _prepare(self, *args, **kwargs):
 		if not self.has_buffer('target') and self.has_buffer('label'):
 			self.register_buffer('target', self.get_buffer('label'))
 		super()._prepare()
-		if not self.has_buffer('label'):
-			# TODO: warning: guessing target buffer
-			key = list(self.buffers.keys())[0 if len(self.buffers) < 3 else -3]
-			self.register_buffer('label', self.get_buffer(key))
+		# if not self.has_buffer('label'):
+		# 	# TODO: warning: guessing target buffer
+		# 	key = list(self.buffers.keys())[0 if len(self.buffers) < 3 else -3]
+		# 	self.register_buffer('label', self.get_buffer(key))
 
 
 	def generate_label(self, N, seed=None, gen=None):
@@ -702,32 +749,21 @@ class LabeledDataset(SupervisedDataset):
 	def generate_observation_from_label(self, label, seed=None, gen=None):
 		raise NotImplementedError
 
+
+
 # Labeled means there exists a deterministic mapping from labels to observations
 # (not including possible subsequent additive noise)
 
 
 
-class SyntheticDataset(LabeledDataset):
-	def __init__(self, distinct_mechanisms=False, standardize_scale=True, **kwargs):
-		super().__init__(**kwargs)
-		self._distinct_mechanisms = distinct_mechanisms
-		self._standardize_scale = standardize_scale
+class _SyntheticInfo(_LabeledInfo):
+	_distinct_mechanisms = True
+	_standardize_scale = True
 
 
 	@property
 	def mechanism_space(self):
-		return self.space_of('mechanism') if self._distinct_mechanisms else self.label_space
-
-
-	def _prepare(self, *args, **kwargs):
-		if not self._distinct_mechanisms and not self.has_buffer('label') and self.has_buffer('mechanism'):
-			self.register_buffer('label', self.get_buffer('mechanism'))
-		super()._prepare()
-		if not self.has_buffer('mechanism'):
-			# TODO: warning: guessing target buffer
-			key = list(self.buffers.keys())[0 if len(self.buffers) < 4 else -4] \
-				if self._distinct_mechanisms else 'label'
-			self.register_buffer('mechanism', self.get_buffer(key))
+		return self.space_of('mechanism')
 
 
 	def transform_to_mechanisms(self, data):
@@ -751,7 +787,37 @@ class SyntheticDataset(LabeledDataset):
 	def distance(self, a, b, standardize=None):  # TODO: link to metric space
 		if standardize is None:
 			standardize = self._standardize_scale
-		return self.mechanism_space.distance(a,b, standardize=standardize)
+		return self.mechanism_space.distance(a, b, standardize=standardize)
+
+
+
+class SyntheticDataset(_SyntheticInfo, LabeledDataset):
+	def __init__(self, standardize_scale=None, **kwargs):
+		super().__init__(**kwargs)
+		if standardize_scale is None:
+			self._standardize_scale = standardize_scale
+
+
+	class Batch(_SyntheticInfo, LabeledDataset.Batch):
+		@property
+		def _distinct_mechanisms(self):
+			return self.source._distince_mechanisms
+	class View(_SyntheticInfo, LabeledDataset.View):
+		@property
+		def _distinct_mechanisms(self):
+			return self.source._distince_mechanisms
+
+
+	def _prepare(self, *args, **kwargs):
+		if not self.has_buffer('label') and self.has_buffer('mechanism'):
+			self._distinct_mechanisms = False
+			self.register_buffer('label', self.get_buffer('mechanism'))
+		super()._prepare()
+		# if not self.has_buffer('mechanism'):
+		# 	# TODO: warning: guessing target buffer
+		# 	key = list(self.buffers.keys())[0 if len(self.buffers) < 4 else -4] \
+		# 		if self._distinct_mechanisms else 'label'
+		# 	self.register_buffer('mechanism', self.get_buffer(key))
 
 
 	def generate_mechanism(self, N, seed=None, gen=None): # TODO: link with prior
@@ -919,9 +985,13 @@ class EncodableDataset(ObservationDataset, RootedDataset):
 	
 	
 	class EncodedBuffer(BufferView):
-		def __init__(self, encoder=None, **kwargs):
+		def __init__(self, encoder=None, max_batch_size=64, encoder_device=None, **kwargs):
 			super().__init__(**kwargs)
+			if encoder is not None and encoder_device is None:
+				encoder_device = getattr(encoder, 'device', None)
+			self._encoder_device = encoder_device
 			self.encoder = encoder
+			self.max_batch_size = max_batch_size
 			
 
 		@property
@@ -932,12 +1002,32 @@ class EncodableDataset(ObservationDataset, RootedDataset):
 			self._encoder = encoder
 			if encoder is not None:
 				self.space = encoder.dout
-		
-		
-		def _get(self, sel=None, device=None, **kwargs):
-			sample = super()._get(sel=sel, device=device, **kwargs)
+			self._encoder_device = getattr(encoder, 'device', self._encoder_device)
+
+
+		def _encode_raw_observations(self, observations):
+			device = observations.device
+			if len(observations) > self.max_batch_size:
+				samples = []
+				batches = observations.chunk(self.max_batch_size)
+				for batch in batches:
+					# with torch.no_grad():
+					if self._encoder_device is not None:
+						batch = batch.to(self._encoder_device)
+					samples.append(self.encoder.encode(batch).to(device))
+				return torch.cat(samples)
+			# with torch.no_grad():
+			if self._encoder_device is not None:
+				observations = observations.to(self._encoder_device)
+			return self.encoder.encode(observations).to(device)
+
+
+		def _get(self, sel=None, **kwargs):
+			sample = super()._get(sel=sel, **kwargs)
 			if self.data is None and self.encoder is not None:
-				sample = self.encoder.encode(sample)
+				sample = self._encode_raw_observations(sample)
+			if sel is None:
+				self.data = sample
 			return sample
 
 

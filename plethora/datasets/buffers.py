@@ -31,6 +31,10 @@ class AbstractCountableData(base.AbstractData):
 		self._default_len = default_len
 
 
+	def __str__(self):
+		return f'{super().__str__()}[{self.size()}]'
+
+
 	def _size(self):
 		raise NotImplementedError
 
@@ -131,11 +135,15 @@ class Buffer(AbstractFixedBuffer, DeviceContainer):
 		self.data = data
 
 
+	def _title(self):
+		return f'{self.__class__.__name__}'
+
+
 	@property
 	def data(self):
 		return self._data
 	@data.setter
-	def data(self, data=None):
+	def data(self, data):
 		self._data = data
 
 	@property
@@ -173,6 +181,7 @@ class RemoteBuffer(Buffer):
 	def __init__(self, auto_load=True, **kwargs):
 		super().__init__(**kwargs)
 		self._auto_load = auto_load
+		# self._auto_cache = auto_cache
 
 
 	def _prepare_sel(self, sel=None, **kwargs):
@@ -190,17 +199,16 @@ class RemoteBuffer(Buffer):
 		return super().size()
 
 
-	def get(self, sel=None, **kwargs):
-		if self.data is not None:
-			return super(RemoteBuffer, self)._get(sel=sel, **kwargs)
-		return super().get(sel=sel, **kwargs)
+	def _get(self, sel=None, **kwargs):
+		if self.data is None:
+			return super(Buffer, self)._get(sel=sel, **kwargs)
+		return super()._get(sel=sel, **kwargs)
 
 
-	def update(self, sel=None, **kwargs):
-		if self.data is not None:
-			return super(RemoteBuffer, self)._update(sel=sel, **kwargs)
-		return super().update(sel=sel, **kwargs)
-
+	def _update(self, sel=None, **kwargs):
+		if self.data is None:
+			return super(Buffer, self)._update(sel=sel, **kwargs)
+		return super()._update(sel=sel, **kwargs)
 
 
 

@@ -96,6 +96,7 @@ class AbstractSupervised(AbstractScikitEstimator): # just a flag to unify wrappe
 		if target is None:
 			target = info['target']
 		self._call_scikit_fn('fit', observation, target)
+		return self._evaluate(info)
 		return info
 
 
@@ -196,7 +197,7 @@ class Classifier(AbstractSupervised):
 
 
 	def predict_probs(self, observation, **kwargs):
-		return self._call_scikit_fn('predict_probs', observation)
+		return self._call_scikit_fn('predict_proba', observation)
 
 
 	def prediction_methods(self):
@@ -211,7 +212,8 @@ class Classifier(AbstractSupervised):
 		target, pred = info['target'], info['pred']
 		target_, pred_ = self._format_scikit_arg(target.squeeze()), self._format_scikit_arg(pred.squeeze())
 
-		report = metrics.classification_report(target_, pred_, target_names=dout.names, output_dict=True)
+		names = getattr(dout, 'values', list(map(str, range(dout.n))))
+		report = metrics.classification_report(target_, pred_, target_names=names, output_dict=True)
 		confusion = metrics.confusion_matrix(target_, pred_)
 
 		precision, recall, fscore, support = metrics.precision_recall_fscore_support(target_, pred_)

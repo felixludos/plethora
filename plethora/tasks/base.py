@@ -57,6 +57,11 @@ class Task(Computable): # TODO: specify random seed for reproducibility
 			for key in heavy:
 				if key in info:
 					del info[key]
+		if 'score' in info:
+			score = info['score']
+			if isinstance(score, torch.Tensor):
+				score = score.item()
+			info['score'] = score
 		return info
 
 
@@ -122,11 +127,12 @@ class BatchedTask(Task):
 class Cumulative(BatchedTask.ResultsContainer):
 	_auto_cumulative_keys = set()
 
-	def __init__(self, **kwargs):
+	def __init__(self, cumulative_device='cpu', **kwargs):
 		super().__init__(**kwargs)
 		self._auto_cumulative_keys = self._auto_cumulative_keys.copy()
 		# self._auto_cumulative_keys = set()
 		self._cumulatives = {}
+		self._cumulative_device = cumulative_device
 
 
 	@agnosticmethod
@@ -134,10 +140,17 @@ class Cumulative(BatchedTask.ResultsContainer):
 		self._auto_cumulative_keys.update(keys)
 
 
+	def _package_value(self, val):
+		val = torch.as_tensor(val)
+		if self._cumulative_device is not None and isinstance(val, torch.Tensor):
+			val = val.to(self._cumulative_device)
+		return val
+
+
 	def accumulate(self, key, val):
 		if key not in self._cumulatives:
 			self._cumulatives[key] = []
-		self._cumulatives[key].append(val)
+		self._cumulatives[key].append(self._package_value(val))
 
 
 	def auto_accumulate(self):
@@ -151,7 +164,6 @@ class Cumulative(BatchedTask.ResultsContainer):
 		super().new_source(source)
 
 
-
 	def clear_cumulatives(self):
 		self._cumulatives.clear()
 
@@ -163,9 +175,9 @@ class Cumulative(BatchedTask.ResultsContainer):
 	def aggregate(self, key, stack=False):
 		if key not in self._cumulatives and (key not in self._auto_cumulative_keys or key not in self):
 			raise self.MissingCumulative(key)
-		elms = [torch.as_tensor(x) for x in self._cumulatives.get(key, [])]
+		elms = self._cumulatives.get(key, []).copy()
 		if key in self._auto_cumulative_keys and key in self: # automatically add last batch (fence-post problem)
-			elms.append(torch.as_tensor(self[key]))
+			elms.append(self._package_value(self[key]))
 		return torch.stack(elms) if stack or len(elms[0].shape) == 0 else torch.cat(elms)
 
 

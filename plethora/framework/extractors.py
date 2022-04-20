@@ -5,28 +5,30 @@ from torch import nn
 import timm
 
 # from ..framework import util
+from ..framework import Extractor, Rooted, Device
 from ..framework.util import spaces
 
 
-class Extractor(nn.Module):
-	def get_encoder_fingerprint(self):
-		raise NotImplementedError
+# class Extractor(nn.Module):
+# 	def get_encoder_fingerprint(self):
+# 		raise NotImplementedError
+#
+#
+# 	def encode(self, x):
+# 		return self(x)
+#
+#
+# 	def extract(self, x):
+# 		return self.encode(x)
 
 
-	def encode(self, x):
-		return self(x)
 
-
-	def extract(self, x):
-		return self.encode(x)
-
-
-
-class Timm_Extractor(Extractor):
+class Timm_Extractor(Extractor, Rooted, Device, nn.Module):
 	def __init__(self, model_name=None, pool_features=True, din=None,
 	             pretrained=True, checkpoint_path='', global_pool='avg', drop_rate=0.,
 	             create_kwargs=None, **kwargs):
-		super().__init__(**kwargs)
+
+		super().__init__(din=din, **kwargs)
 		self.model_name = model_name
 
 		if create_kwargs is None:
@@ -47,6 +49,15 @@ class Timm_Extractor(Extractor):
 
 		self._fix_channels = False
 		self.din, self.dout = self._infer_dim(din)
+		self.to(self.device)
+
+
+	def _to(self, device, **kwargs):
+		return super(Device, self).to(device)
+
+
+	def extract(self, observation):
+		return self(observation)
 
 
 	def get_extractor_key(self):

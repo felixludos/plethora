@@ -168,7 +168,7 @@ class Fitable(Resultable):
 class Model(Buildable, Fitable):
 
 	@agnosticmethod
-	def create_fit_results_container(self, **kwrags):
+	def create_fit_results_container(self, **kwargs):
 		return self.create_results_container(**kwargs)
 
 

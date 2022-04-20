@@ -1,2 +1,2 @@
-from .estimators import GBTRegressor, GBTClassifier, GradientBoostingBuilder, GradientBoostingWrapperBuilder
+from .estimators import GradientBoostingWrapperBuilder#, GBTRegressor, GBTClassifier, GradientBoostingBuilder
 from .task import InferenceTask

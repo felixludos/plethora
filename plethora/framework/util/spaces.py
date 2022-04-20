@@ -175,8 +175,9 @@ class HalfBoundDim(ContinuousDim):
 
 
 	def __str__(self):
+		terms = ('('+ ', '.join(map(str,self.shape))+'), ') if len(self) > 1 else ''
 		lim = f'min={self.min.mean().item():.3g}' if self.min is not None else f'max={self.max.mean().item():.3g}'
-		return f'HalfBound({lim})'
+		return f'HalfBound({terms}{lim})'
 
 
 	def standardize(self, vals):
@@ -225,7 +226,8 @@ class BoundDim(ContinuousDim):
 
 
 	def __str__(self):
-		return f'Bound(min={self.min.mean().item():.3g}, max={self.max.mean().item():.3g})'
+		terms = ('('+ ', '.join(map(str,self.shape))+'), ') if len(self) > 1 else ''
+		return f'Bound({terms}min={self.min.mean().item():.3g}, max={self.max.mean().item():.3g})'
 
 
 	def _sample(self, shape, generator):
@@ -253,7 +255,8 @@ class UnboundDim(ContinuousDim):
 
 
 	def __str__(self):
-		return 'Unbound()'
+		terms = ', '.join(map(str,self.shape)) if len(self) > 1 else ''
+		return f'Unbound({terms})'
 
 
 	def standardize(self, vals):

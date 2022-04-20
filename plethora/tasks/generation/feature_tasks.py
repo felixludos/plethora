@@ -70,14 +70,14 @@ class FID_GenerationTask(FeatureGenerationTask):
 	
 	@agnosticmethod
 	def _compare_features(self, info):
-		fake_mu, fake_std = self.compute_fid_stats(info[self.fake_features_key])
-		real_mu, real_std = self.compute_fid_stats(info[self.real_features_key])
+		fake_mu, fake_cov = self.compute_fid_stats(info[self.fake_features_key])
+		real_mu, real_cov = self.compute_fid_stats(info[self.real_features_key])
 
 		info.update({
-			'fake_fid_mu': fake_mu, 'fake_fid_std': fake_std,
-			'real_fid_mu': real_mu, 'real_fid_std': real_std,
+			'fake_fid_mu': fake_mu, 'fake_fid_cov': fake_cov,
+			'real_fid_mu': real_mu, 'real_fid_cov': real_cov,
 		})
-		score = self.compute_frechet_distance(fake_mu, fake_std, real_mu, real_std).item()
+		score = self.compute_frechet_distance(fake_mu, fake_cov, real_mu, real_cov).item()
 		info[self.score_key] = score
 		return info
 
@@ -185,6 +185,7 @@ class PR_GenerationTask(FeatureGenerationTask):
 	def _compare_features(self, info):
 		info = super()._compare_features(info)
 		precision, recall = info[self.score_key]
+		precision, recall = precision.item(), recall.item()
 		info['precision'], info['recall'] = precision, recall
 		info[self.score_key] = 2 * precision * recall / (precision + recall)
 		return info
