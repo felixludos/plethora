@@ -21,7 +21,7 @@ class ImageBuffer(Buffer):
 
 
 class Torchvision_Toy_Dataset(SupervisedDataset, ImageDataset):
-	def __init__(self, resize=True, download=None, target_attr='targets',
+	def __init__(self, resize=True, target_attr='targets',
 	             mode=None, default_len=None,
 	             _source_type=None, _source_kwargs=None,
 	             _observation_space=None, _target_space=None, **kwargs):
@@ -41,7 +41,6 @@ class Torchvision_Toy_Dataset(SupervisedDataset, ImageDataset):
 		self.register_buffer('target', space=_target_space)
 
 		self.resize = resize
-		self._download = download
 		self._target_attr = target_attr
 
 
@@ -50,8 +49,8 @@ class Torchvision_Toy_Dataset(SupervisedDataset, ImageDataset):
 		if 'root' not in kwargs:
 			kwargs['root'] = self.get_root()
 		kwargs['train'] = self.mode != 'test'
-		if 'download' not in kwargs and self._download is not None:
-			kwargs['download'] = self._download
+		if 'download' not in kwargs and self._auto_download is not None:
+			kwargs['download'] = self._auto_download
 		return kwargs
 
 

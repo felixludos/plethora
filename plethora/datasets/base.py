@@ -7,6 +7,7 @@ import torch
 from omnibelt import unspecified_argument, duplicate_instance, md5, agnosticmethod
 import h5py as hf
 
+from ..framework.features import Prepared
 from ..framework import base, Rooted, Named, Device
 from .buffers import AbstractFixedBuffer, Buffer, BufferView, HDFBuffer, \
 	AbstractCountableData, AbstractCountableDataView
@@ -218,7 +219,7 @@ class DataSource(Batchable, base.AbstractData, Named):
 
 
 	def _prepare(self, *args, **kwargs):
-		for buffer in self.iter_buffers():
+		for name, buffer in self.iter_buffers(True):
 			buffer.prepare()
 
 
@@ -331,14 +332,19 @@ class BufferTable(DataSource):
 		return list(self.buffers.keys())
 
 
-	def iter_buffers(self): # iterates through buffers
-		return self.buffers.values()
+	def iter_buffers(self, items=True): # iterates through buffers
+		for k, v in self.buffers.items():
+			if not isinstance(v, str):
+				yield (k,v) if items else v
 
 
 	def get_buffer(self, name):
 		if name not in self.buffers:
 			raise self.MissingBuffer(name)
-		return self.buffers[name]
+		buffer = self.buffers[name]
+		if isinstance(buffer, str):
+			return self.get_buffer(buffer)
+		return buffer
 
 
 	def has_buffer(self, name):
@@ -364,7 +370,9 @@ class BufferTable(DataSource):
 
 
 	def register_buffer(self, name, buffer=None, space=unspecified_argument, **kwargs):
-		if not isinstance(buffer, base.AbstractBuffer):
+		if isinstance(buffer, str):
+			assert space is unspecified_argument, 'cant specify a space for an alias'
+		elif not isinstance(buffer, base.AbstractBuffer):
 		# elif buffer is None or isinstance(buffer, torch.Tensor):
 			if type(buffer) == type and issubclass(buffer, base.AbstractBuffer):
 				if space is not unspecified_argument:
@@ -377,7 +385,7 @@ class BufferTable(DataSource):
 				buffer = self._create_buffer(**kwargs)
 		if space is not unspecified_argument:
 			buffer.space = space
-		if not self._check_buffer(name, buffer):
+		if not isinstance(buffer, str) and not self._check_buffer(name, buffer):
 			raise InvalidBuffer(name, buffer)
 		self.buffers[name] = buffer
 		return self.buffers[name]
@@ -487,7 +495,7 @@ class DataCollection(MultiModed, BufferTable, DataSource):
 
 
 	def _update(self, sel=None, **kwargs):
-		for buffer in self.iter_buffers():
+		for name, buffer in self.iter_buffers(True):
 			buffer.update(sel=sel, **kwargs)
 
 
@@ -595,7 +603,7 @@ class Dataset(Subsetable, DataCollection):
 
 
 	def _size(self):
-		return next(iter(self.buffers.values())).size()
+		return next(iter(self.iter_buffers(True)))[1].size()
 
 
 	def get_subset_src(self, recursive=True):
@@ -619,7 +627,8 @@ class Dataset(Subsetable, DataCollection):
 				new._subset_src = self
 			new._default_len = len(sel)
 			for name, buffer in self.buffers.items():
-				new.register_buffer(name, self._create_buffer_view(buffer, sel=sel))
+				new.register_buffer(name, buffer if isinstance(buffer, str)
+				else self._create_buffer_view(buffer, sel=sel))
 		else:
 			new = super().subset(cut=cut, sel=sel, shuffle=shuffle)
 		if self.mode is not None:
@@ -722,16 +731,21 @@ class _LabeledInfo(_SupervisionInfo):
 
 
 class LabeledDataset(_LabeledInfo, SupervisedDataset):
+	def __init__(self, **kwargs):
+		super().__init__(**kwargs)
+		self.register_buffer('target', 'label')
+
+
 	class Batch(_LabeledInfo, SupervisedDataset.Batch):
 		pass
 	class View(_LabeledInfo, SupervisedDataset.View):
 		pass
 
 
-	def _prepare(self, *args, **kwargs):
-		if not self.has_buffer('target') and self.has_buffer('label'):
-			self.register_buffer('target', self.get_buffer('label'))
-		super()._prepare()
+	# def _prepare(self, *args, **kwargs):
+	# 	if not self.has_buffer('target') and self.has_buffer('label'):
+	# 		self.register_buffer('target', self.get_buffer('label'))
+	# 	super()._prepare(*args, **kwargs)
 		# if not self.has_buffer('label'):
 		# 	# TODO: warning: guessing target buffer
 		# 	key = list(self.buffers.keys())[0 if len(self.buffers) < 3 else -3]
@@ -792,10 +806,17 @@ class _SyntheticInfo(_LabeledInfo):
 
 
 class SyntheticDataset(_SyntheticInfo, LabeledDataset):
-	def __init__(self, standardize_scale=None, **kwargs):
+	_standardize_scale = True
+	_use_mechanisms = True
+
+	def __init__(self, standardize_scale=None, use_mechanisms=None, **kwargs):
 		super().__init__(**kwargs)
-		if standardize_scale is None:
+		if standardize_scale is not None:
 			self._standardize_scale = standardize_scale
+		if use_mechanisms is not None:
+			self._use_mechanisms = use_mechanisms
+		self.register_buffer('mechanism', 'label')
+		self.register_buffer('target', 'mechanism' if self._use_mechanisms else 'label')
 
 
 	class Batch(_SyntheticInfo, LabeledDataset.Batch):
@@ -806,18 +827,6 @@ class SyntheticDataset(_SyntheticInfo, LabeledDataset):
 		@property
 		def _distinct_mechanisms(self):
 			return self.source._distince_mechanisms
-
-
-	def _prepare(self, *args, **kwargs):
-		if not self.has_buffer('label') and self.has_buffer('mechanism'):
-			self._distinct_mechanisms = False
-			self.register_buffer('label', self.get_buffer('mechanism'))
-		super()._prepare()
-		# if not self.has_buffer('mechanism'):
-		# 	# TODO: warning: guessing target buffer
-		# 	key = list(self.buffers.keys())[0 if len(self.buffers) < 4 else -4] \
-		# 		if self._distinct_mechanisms else 'label'
-		# 	self.register_buffer('mechanism', self.get_buffer(key))
 
 
 	def generate_mechanism(self, N, seed=None, gen=None): # TODO: link with prior
@@ -846,6 +855,7 @@ class RootedDataset(DataCollection, Rooted):
 		return super()._infer_root(root=root) / 'datasets'
 
 
+	@agnosticmethod
 	def get_root(self, dataset_dir=None):
 		if dataset_dir is None:
 			dataset_dir = self.name
@@ -1033,12 +1043,19 @@ class EncodableDataset(ObservationDataset, RootedDataset):
 
 
 class ImageDataset(ObservationDataset, RootedDataset):
-	# def __init__(self, **kwargs):
-	# 	pass
+	def __init__(self, download=False, **kwargs):
+		super().__init__(**kwargs)
+		self._auto_download = download
+
 
 	@classmethod
 	def download(cls, **kwargs):
 		raise NotImplementedError
+
+
+	class DatasetNotDownloaded(FileNotFoundError):
+		def __init__(self):
+			super().__init__('use download=True to enable automatic download.')
 
 
 	# @classmethod

@@ -129,10 +129,11 @@ class AbstractFixedBuffer(AbstractCountableData, base.AbstractBuffer): # fixed n
 
 
 class Buffer(AbstractFixedBuffer, DeviceContainer):
-	def __init__(self, data=None, **kwargs):
+	def __init__(self, data=None, space=None, **kwargs):
 		super().__init__(**kwargs)
 		self._register_deviced_children(_data=None)
 		self.data = data
+		self.space = space
 
 
 	def _title(self):
@@ -145,6 +146,15 @@ class Buffer(AbstractFixedBuffer, DeviceContainer):
 	@data.setter
 	def data(self, data):
 		self._data = data
+
+
+	@property
+	def space(self):
+		return self._space
+	@space.setter
+	def space(self, space):
+		self._space = space
+
 
 	@property
 	def is_ready(self):
@@ -160,8 +170,9 @@ class Buffer(AbstractFixedBuffer, DeviceContainer):
 
 
 	def _prepare_sel(self, sel=None, **kwargs):
-		if self.data is None:
-			raise self.MissingData
+		pass
+		# if self.data is None:
+		# 	raise self.MissingData
 
 
 	def _get(self, sel=None, device=None, **kwargs):
@@ -196,7 +207,7 @@ class RemoteBuffer(Buffer):
 	def size(self):
 		if self.data is not None:
 			return super(RemoteBuffer, self)._size()
-		return super().size()
+		return super()._size()
 
 
 	def _get(self, sel=None, **kwargs):
@@ -213,7 +224,7 @@ class RemoteBuffer(Buffer):
 
 
 class HDFBuffer(RemoteBuffer):
-	def __init__(self, dataset_name=None, path=None, default_len=None, shape=None, auto_load=True, **kwargs):
+	def __init__(self, dataset_name=None, path=None, default_len=None, shape=None, **kwargs):
 		if path is not None and path.exists() and dataset_name is not None:
 			with hf.File(str(path), 'r') as f:
 				if dataset_name in f:
@@ -225,8 +236,6 @@ class HDFBuffer(RemoteBuffer):
 		super().__init__(default_len=default_len, **kwargs)
 		self.path = path
 		self.key_name = dataset_name
-
-		self._auto_load = auto_load
 
 		self._shape = shape
 		self._selected = None
@@ -285,7 +294,6 @@ class HDFBuffer(RemoteBuffer):
 
 
 class BufferView(AbstractCountableDataView, RemoteBuffer):
-
 	def _prepare_sel(self, sel=None, **kwargs):
 		sel = self._merge_sel(sel)
 		if self.source is None:
@@ -302,74 +310,6 @@ class BufferView(AbstractCountableDataView, RemoteBuffer):
 	def space(self, space):
 		self._space = space
 
-
-
-	# def __init__(self, source=None, sel=None, **kwargs):
-	# 	super().__init__(**kwargs)
-	# 	self.source, self.sel = None, None
-	# 	self._register_deviced_children(source=source, sel=sel)
-	# 	self.set_source(source)
-
-	# def is_ready(self):
-	# 	return (self.source is not None and self.source.is_ready()) or (self.source is None and super().is_ready())
-	#
-	#
-	# def _count(self):
-	# 	if self.sel is None:
-	# 		return (self.source is not None and len(self.source)) or (self.source is None and super()._count())
-	# 	return len(self.sel)
-	#
-	#
-	# def unwrap(self, **kwargs):
-	# 	if self.is_ready() and self.source is not None:
-	# 		self.set_data(self._get(sel=self.sel, device=self.device, **kwargs))
-	# 		self.sel = None
-	# 		self.space = self.space
-	# 		# self._loaded = self.source._loaded
-	# 		# self.set_source()
-	# 		return
-	# 	raise self.NotLoadedError(self)
-	#
-	#
-	# def merge(self, new_instance=None):
-	# 	raise NotImplementedError
-	#
-	#
-	# @staticmethod
-	# def stack(*datasets): # TODO: append these
-	# 	raise NotImplementedError
-	#
-	#
-	# def set_source(self, source=None):
-	# 	self.source = source
-
-
-	# @property
-	# def space(self):
-	# 	if self._space is None:
-	# 		return self.source.space
-	# 	return self.space
-	# @space.setter
-	# def space(self, space):
-	# 	self._space = space
-	#
-	#
-	# def _prepare(self, *args, **kwargs):
-	# 	pass
-	#
-	#
-	# def _update(self, sel=None, **kwargs):
-	# 	if self.source is None:
-	# 		super()._update(sel=sel, **kwargs)
-	#
-	#
-	# def _get(self, sel=None, device=None, **kwargs):
-	# 	if self.data is not None:
-	# 		return super()._get(sel, device=device, **kwargs)
-	# 	if self.sel is not None:
-	# 		sel = self.sel if sel is None else self.sel[sel]
-	# 	assert self.source is not None, 'missing source'
-	# 	return self.source.get(sel, device=device, **kwargs)
 
 
 Buffer.View = BufferView
@@ -401,5 +341,18 @@ class NarrowBufferView(Narrow, BufferView):
 
 
 
+
+class TransformedBuffer(BufferView):
+	def _get(self, sel=None, **kwargs):
+		src = super()._get(sel=sel, **kwargs)
+		return self.space.transform(src, self.source.space)
+
+
+	@property
+	def space(self):
+		return self._space
+	@space.setter
+	def space(self, space):
+		self._space = space
 
 

@@ -52,9 +52,19 @@ from .framework import Criterion
 from .framework.extractors import Timm_Extractor
 from . import tasks
 # from .tasks import ReconstructionTask, FID_GenerationTask
+from plethora import datasets
 
 @fig.Script('test')
 def _test_script(A):
+
+	# dataset = datasets.Shapes3D(download=False, mode='test')
+	#
+	# dataset.prepare()
+	#
+	# print(len(dataset))
+	#
+	# return
+
 	# print(ReconstructionTask.criterion_name)
 	#
 	# print(ReconstructionTask.criterion)
@@ -69,7 +79,8 @@ def _test_script(A):
 
 	device = 'cuda'
 
-	dataset = MNIST(batch_device=device, batch_size=200)
+	dataset = datasets.Shapes3D(batch_device=device, download=False, mode='train')
+	# dataset = MNIST(batch_device=device, batch_size=200)
 	len(dataset), dataset.din, dataset.dout
 	dataset.prepare();
 	batch = dataset.get_batch()
@@ -77,18 +88,20 @@ def _test_script(A):
 	# obs = batch.get('observation')
 	# obs.shape
 
-	extractor = Timm_Extractor('mobilenetv3_large_100', din=dataset.space_of('observation'))
+	extractor = Timm_Extractor('mobilenetv3_large_100', din=dataset.observation_space)
 
-	enc = models.make_MLP((1,32,32), 10).to(device)
+	latent_dim = 10
+
+	enc = models.make_MLP(dataset.din.shape, latent_dim).to(device)
 	enc.device = device
 	enc.encode = enc.forward
 
-	dec = models.make_MLP(10, (1,32,32), output_nonlin='sigmoid').to(device)
+	dec = models.make_MLP(latent_dim, dataset.din.shape, output_nonlin='sigmoid').to(device)
 	dec.device = device
 	dec.decode = dec.forward
 
 	def generate(N, gen=None):
-		z = torch.randn(N, 10, generator=gen).to(device)
+		z = torch.randn(N, latent_dim, generator=gen).to(device)
 		with torch.no_grad():
 			return dec(z)
 	dec.generate = generate
