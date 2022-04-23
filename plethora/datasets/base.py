@@ -243,10 +243,28 @@ class SourceView(DataSource, base.AbstractView):
 		return f'{self.__class__.__name__}{src}'#"{hex(id(self))[2:]}"'
 
 
-	def get(self, name, sel=unspecified_argument, **kwargs):
-		if sel is unspecified_argument:
-			sel = self.sel
-		return super().get(sel=sel, name=name, **kwargs)
+	# def get(self, name, sel=unspecified_argument, **kwargs):
+	# 	if sel is unspecified_argument:
+	# 		sel = self.sel
+	# 	return super().get(sel=sel, name=name, **kwargs)
+
+
+	def _get(self, name, sel=None, **kwargs):
+		if self.source is None:
+			raise self.NoSource
+		sel = self._merge_sel(sel)
+		return self.source.get(name, sel=sel, **kwargs)
+		# return self.get_buffer(name).get(sel)
+		buffer = self.get_buffer(name)
+		data = buffer.get(sel)
+		return data
+
+
+	def _update(self, sel=None, **kwargs):
+		if self.source is None:
+			raise self.NoSource
+		sel = self._merge_sel(sel)
+		return self.source.update(sel=sel, **kwargs)
 
 
 	Batch = None
@@ -424,6 +442,29 @@ class ReplacementView(BufferTable, SourceView):
 		return super(BufferTable, self).get_buffer(name)
 
 
+	def _get(self, name, sel=None, **kwargs):
+		if name in self.buffers:
+			return super(SourceView, self)._get(name, sel=sel, **kwargs)
+		return super()._get(name, sel=sel, **kwargs)
+		if self.source is None:
+			raise self.NoSource
+		sel = self._merge_sel(sel)
+		return self.source.get(name, sel=sel, **kwargs)
+		# return self.get_buffer(name).get(sel)
+		buffer = self.get_buffer(name)
+		data = buffer.get(sel)
+		return data
+
+
+	def _update(self, sel=None, **kwargs):
+		if name in self.buffers:
+			return super(SourceView, self)._update(name, sel=sel, **kwargs)
+		if self.source is None:
+			raise self.NoSource
+		sel = self._merge_sel(sel)
+		return self.source.update(sel=sel, **kwargs)
+
+
 	def has_buffer(self, name):
 		return name in self.buffers or name in super(BufferTable, self).has_buffer(name)
 
@@ -466,8 +507,7 @@ class CachedView(SourceView, base.Container):
 		if self.is_cached(name):
 			return super(base.AbstractData, self).get(name, default)
 		elif name in self:
-			sel = self.sel
-			val = super().get(name, sel=sel, **kwargs)
+			val = super().get(name, **kwargs)
 			if self.device is not None:
 				val = val.to(self.device)
 			self[name] = val

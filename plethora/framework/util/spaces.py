@@ -8,7 +8,7 @@ import numpy as np
 # import torch
 # from torch.nn import functional as F
 
-# from .math import angle_diff
+from .math import angle_diff
 # from .features import DeviceBase, Configurable
 
 
@@ -176,7 +176,8 @@ class HalfBoundDim(ContinuousDim):
 
 	def __str__(self):
 		terms = ('('+ ', '.join(map(str,self.shape))+'), ') if len(self) > 1 else ''
-		lim = f'min={self.min.mean().item():.3g}' if self.min is not None else f'max={self.max.mean().item():.3g}'
+		lim = f'min={self.min.mean().item():.3g}' \
+			if self.min is not None else f'max={self.max.mean().item():.3g}'
 		return f'HalfBound({terms}{lim})'
 
 
@@ -218,6 +219,7 @@ class HalfBoundDim(ContinuousDim):
 
 class BoundDim(ContinuousDim):
 	def __init__(self, min=0., max=1., epsilon=1e-10, **kwargs):
+		min, max = torch.as_tensor(min).float(), torch.as_tensor(max).float()
 		super().__init__(min=min, max=max, **kwargs)
 		assert self.min is not None, f'No lower bound provided'
 		assert self.max is not None, f'No upper bound provided'
@@ -235,13 +237,19 @@ class BoundDim(ContinuousDim):
 
 
 	def standardize(self, vals):
-		return vals.sub(self.min.unsqueeze(0)).div(self.range.unsqueeze(0)) \
-			.clamp(min=self._epsilon, max=1 - self._epsilon)
+		# v = vals.to(self.min)
+		# v2 = v.sub(self.min.unsqueeze(0))
+		# v3 = v2.div(self.range.unsqueeze(0))
+		# v4 = v3.clamp(min=self._epsilon, max=1 - self._epsilon)
+		# v5 = v4.to(vals)
+		# return v5
+		return vals.to(self.min).sub(self.min.unsqueeze(0)).div(self.range.unsqueeze(0)) \
+			.clamp(min=self._epsilon, max=1 - self._epsilon).to(vals)
 
 
 	def unstandardize(self, vals):
-		return vals.clamp(min=self._epsilon, max=1 - self._epsilon) \
-			.mul(self.range.unsqueeze(0)).add(self.min.unsqueeze(0))
+		return vals.to(self.range).clamp(min=self._epsilon, max=1 - self._epsilon) \
+			.mul(self.range.unsqueeze(0)).add(self.min.unsqueeze(0)).to(vals)
 
 
 	def difference(self, x, y, standardize=False):
@@ -297,7 +305,7 @@ class PeriodicDim(BoundDim):
 
 	def compress(self, vals):
 		vals = vals.view(-1, *self.expanded_shape)
-		return self.unstandardize(torch.atan2(vals[..., 1], vals[..., 0]).div(2 * np.pi))
+		return self.unstandardize(torch.atan2(vals[..., 1], vals[..., 0]).div(2 * np.pi).remainder(1))
 
 
 	def difference(self, x, y, standardize=False):

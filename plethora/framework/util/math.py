@@ -1,5 +1,5 @@
 # import random
-# import numpy as np
+import numpy as np
 import torch
 
 
@@ -22,6 +22,10 @@ def gen_deterministic_seed(seed):
 	return gen_random_seed(torch.Generator().manual_seed(seed))
 
 
+
+def angle_diff(angle1, angle2, period=2*np.pi):
+	a = angle1 - angle2
+	return (a + period/2) % period - period/2
 
 
 

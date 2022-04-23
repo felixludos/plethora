@@ -80,6 +80,9 @@ class InferenceTask(DownstreamTask):
 		if len(self._train_dataset) == 0:
 			self._split_dataset()
 		return self._train_dataset[-1]
+	@train_dataset.setter
+	def train_dataset(self, dataset):
+		self._train_dataset.append(self._wrap_dataset(dataset, self.encoder))
 	@train_dataset.deleter
 	def train_dataset(self):
 		self._train_dataset.clear()
@@ -90,6 +93,9 @@ class InferenceTask(DownstreamTask):
 		if len(self._eval_dataset) == 0:
 			self._split_dataset()
 		return self._eval_dataset[-1]
+	@eval_dataset.setter
+	def eval_dataset(self, dataset):
+		self._eval_dataset.append(self._wrap_dataset(dataset, self.encoder))
 	@eval_dataset.deleter
 	def eval_dataset(self):
 		self._eval_dataset.clear()

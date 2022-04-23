@@ -88,6 +88,11 @@ def _test_script(A):
 	# obs = batch.get('observation')
 	# obs.shape
 
+	# batch = dataset.get_batch()
+	# obs = batch.get('observation')
+	# print(obs.shape)
+
+
 	extractor = Timm_Extractor('mobilenetv3_large_100', din=dataset.observation_space)
 
 	latent_dim = 10
@@ -121,8 +126,8 @@ def _test_script(A):
 	#                           encoder=enc, decoder=dec)
 
 	with torch.no_grad():
-		out = task.compute(batch)
-		print(out['score'])
+		# out = task.compute(batch)
+		# print(out['score'])
 
 		out = task.compute()
 		print(out['score'])

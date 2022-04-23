@@ -40,7 +40,7 @@ class AbstractScikitEstimator(Model, Function):
 
 		def _find_missing(self, key, **kwargs):
 			if self.estimator is not None and key in self.estimator.prediction_methods():
-				return self._infer(key, **kwargs)
+				return self.get_result(key, **kwargs)
 			return super()._find_missing(key, **kwargs)
 
 
@@ -87,7 +87,7 @@ class AbstractSupervised(AbstractScikitEstimator): # just a flag to unify wrappe
 
 
 	def predict(self, observation, **kwargs):
-		return self._call_scikit_fn('predict', observation)
+		return self._call_scikit_fn('predict', observation).view(observation.shape[0], -1)
 
 
 	def _fit(self, info, observation=None, target=None):
@@ -95,7 +95,7 @@ class AbstractSupervised(AbstractScikitEstimator): # just a flag to unify wrappe
 			observation = info['observation']
 		if target is None:
 			target = info['target']
-		self._call_scikit_fn('fit', observation, target)
+		self._call_scikit_fn('fit', observation, target.squeeze())
 		return self._evaluate(info)
 		return info
 
@@ -141,7 +141,7 @@ class Regressor(AbstractSupervised):
 			target = info['target']
 		if self.standardize_target:
 			dout = info.source.space_of('target')
-			target = dout.standarize(target)
+			target = dout.standardize(target)
 		return super()._fit(info, observation=observation, target=target)
 
 
@@ -149,8 +149,8 @@ class Regressor(AbstractSupervised):
 		dout = info.source.space_of('target')
 
 		target, pred = info['target'], info['pred']
-		if self.standardize_target:
-			target, pred = dout.standardize(target), dout.standardize(pred)
+		# if self.standardize_target:
+		# 	target, pred = dout.standardize(target), dout.standardize(pred)
 
 		# pred = torch.from_numpy(pred).float()
 		# labels = torch.from_numpy(labels).float().view(*pred.shape)
@@ -187,7 +187,7 @@ class Regressor(AbstractSupervised):
 		info['r2'] = 1 - errs.mean(0, keepdim=True).div(avg_error).mean().item()
 		if self.success_threshold is not None:
 			cutoff = avg_error * self.success_threshold
-			info['success'] = cutoff.sub(errs).ge(0).prod(-1).sum() / errs.shape[0]
+			info['success'] = cutoff.sub(errs).ge(0).prod(-1).sum().item() / errs.shape[0]
 		return info
 
 
@@ -274,7 +274,7 @@ class ParallelEstimator(AbstractScikitEstimator):
 	def _process_outputs(self, key, outs):
 		try:
 			return torch.stack(outs, 1)
-		except RuntimeError:
+		except TypeError:
 			return outs
 
 
@@ -290,9 +290,10 @@ class ParallelEstimator(AbstractScikitEstimator):
 		try:
 			scores = [i['score'] for i in infos]
 			info['score'] = np.mean(scores)
+			# info['indivdiuals'] = infos
 		except KeyError:
 			pass
-		return infos
+		return info
 
 
 	def fit(self, source, **kwargs):
@@ -317,6 +318,12 @@ class JointEstimator(ParallelEstimator): # collection of single dim estimators (
 			estimator.dout = dout
 
 
+	def _process_inputs(self, key, *ins, **kwargs):
+		if key in {'fit', 'evaluate'}:
+			return self._split_source(key, *ins, **kwargs)
+		return super()._process_inputs(key, *ins, **kwargs)
+
+
 	_split_key = 'target'
 	def _split_source(self, key, source, split_key=None):
 		if split_key is None:
@@ -324,20 +331,16 @@ class JointEstimator(ParallelEstimator): # collection of single dim estimators (
 
 		target = source[split_key]
 
+		dims = source.space_of(split_key)
+
 		sources = []
 		start = 0
-		for dim in self.dout:
+		for dim in dims:
 			view = source.create_view()
-			view.register_buffer(split_key, target.narrow(1, start, len(dim)))
+			view.register_buffer(split_key, target.narrow(1, start, len(dim)), space=dim)
 			sources.append((view,))
 			start += len(dim)
 		return sources
-
-
-	def _process_inputs(self, key, *ins, **kwargs):
-		if key in {'fit', 'evaluate'}:
-			return self._split_source(key, *ins, **kwargs)
-		return super()._process_inputs(key, *ins, **kwargs)
 
 
 
@@ -353,11 +356,11 @@ class MultiEstimator(ParallelEstimator): # all estimators must be of the same ki
 		self._raw_pred = val
 
 
-	def __getattribute__(self, item):
+	def __getattr__(self, item):
 		try:
 			return super().__getattribute__(item)
 		except AttributeError:
-			return self.estimators[0].__getattribute__(item)
+			return getattr(self.estimators[0], item)
 
 
 	def _merge_predictions(self, outs, **kwargs):
@@ -371,10 +374,10 @@ class MultiEstimator(ParallelEstimator): # all estimators must be of the same ki
 
 
 
-class Periodized(Regressor, MultiEstimator): # create a copy of the estimator for the sin component
+class Periodized(MultiEstimator, Regressor): # create a copy of the estimator for the sin component
 	def __init__(self, estimators=None, **kwargs):
 		super().__init__(estimators=estimators, **kwargs)
-		assert len(self) == 2, 'must have 2 estimators for cos and sin' # TODO: use dedicated exception type
+		assert len(estimators) == 2, 'must have 2 estimators for cos and sin' # TODO: use dedicated exception type
 
 
 	def _prep_estimator(self, estimator): # TODO: maybe remove or fix deep copy
@@ -407,7 +410,7 @@ class Periodized(Regressor, MultiEstimator): # create a copy of the estimator fo
 
 	def evaluate(self, source, online=False, **kwargs):
 		raws = None if online else super().evaluate(source)
-		out = super(ParallelEstimator, self).evaluate(source)
+		out = super(ParallelEstimator, self).evaluate(source, **kwargs)
 		if raws is not None:
 			out['individuals'] = raws['individuals']
 		return out
