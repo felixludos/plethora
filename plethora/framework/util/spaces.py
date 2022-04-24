@@ -13,10 +13,9 @@ from .math import angle_diff
 
 
 # TODO: include dtypes
-# TODO: include property "dof"
 
 
-class DimSpec(Packable):
+class Dim(Packable):
 	def __init__(self, min=None, max=None, shape=(1,), dtype=None, **kwargs):
 		
 		if isinstance(shape, int):
@@ -130,7 +129,7 @@ class DimSpec(Packable):
 
 
 
-class ContinuousDim(DimSpec):
+class Continuous(Dim):
 	def sample(self, N=None, gen=None, seed=None):
 		
 		if seed is not None:
@@ -152,7 +151,7 @@ class ContinuousDim(DimSpec):
 
 
 
-class HalfBoundDim(ContinuousDim):
+class HalfBound(Continuous):
 	def __init__(self, bound=0, side='lower', bound_type='exp', epsilon=1e-10,
 	             min=None, max=None, **kwargs):
 		
@@ -217,7 +216,7 @@ class HalfBoundDim(ContinuousDim):
 
 
 
-class BoundDim(ContinuousDim):
+class Bound(Continuous):
 	def __init__(self, min=0., max=1., epsilon=1e-10, **kwargs):
 		min, max = torch.as_tensor(min).float(), torch.as_tensor(max).float()
 		super().__init__(min=min, max=max, **kwargs)
@@ -257,7 +256,7 @@ class BoundDim(ContinuousDim):
 
 
 
-class UnboundDim(ContinuousDim):
+class Unbound(Continuous):
 	def __init__(self, min=None, max=None, **kwargs):
 		super().__init__(min=None, max=None, **kwargs)
 
@@ -276,7 +275,7 @@ class UnboundDim(ContinuousDim):
 
 
 
-class PeriodicDim(BoundDim):
+class Periodic(Bound):
 	def __init__(self, period=1., min=0., max=None, **kwargs):
 		assert min is not None and (period is not None or max is not None), 'Not enough bounds provided'
 		if max is None:
@@ -313,21 +312,56 @@ class PeriodicDim(BoundDim):
 
 
 	def transform(self, vals, spec):
-		if isinstance(spec, CategoricalDim):
+		if isinstance(spec, Categorical):
 			spec.n += 1
 		out = super().transform(vals, spec)
-		if isinstance(spec, CategoricalDim):
+		if isinstance(spec, Categorical):
 			spec.n -= 1
 		return out
 
 
 
-class MultiDimSpace(DimSpec):
+class MultiDim(Dim):
 	pass
 
 
+class Surface(MultiDim):
+	def __init__(self, k=None, dim=1, shape=None, **kwargs):
+		assert k is not None or shape is not None, 'need a dimensionality of the topology'
+		super().__init__(shape=shape, **kwargs)
+		if k is None:
+			k = (0, *self.shape)[dim]
+		assert k > 0, 'topology must have more than 0 dimensions'
+		self.dim = dim
+		self.k = k
 
-class SimplexSpace(MultiDimSpace, BoundDim):
+
+	def geodesic(self, x, y, standardize=False):
+		raise NotImplementedError
+
+
+	def difference(self, x, y, standardize=False):
+		if standardize:
+			x, y = self.standardize(x), self.standardize(y)
+		return self.geodesic(x, y)
+
+
+
+class LebesgueSpace(Surface):
+	p = None
+
+	def standardize(self, vals):
+		return F.normalize(vals, p=self.norm, dim=self.dim)
+
+
+	def unstandardize(self, vals):
+		return self.standardize(vals)
+
+
+
+class Simplex(LebesgueSpace, Bound):
+	p = 1
+
 	def sample(self, N=None, **kwargs):  # from Donald B. Rubin, The Bayesian bootstrap Ann. Statist. 9, 1981, 130-134.
 		# discussed in https://cs.stackexchange.com/questions/3227/uniform-sampling-from-a-simplex
 		
@@ -338,8 +372,8 @@ class SimplexSpace(MultiDimSpace, BoundDim):
 		
 		extra_shape = [N, *self.shape]
 		raw = super().sample(N=N, **kwargs).view(*extra_shape)
-		
-		dim = (-1) ** (not self.channel_first)
+
+		dim = self.dim
 		extra_shape[dim] = 1
 		
 		edges = torch.cat([torch.zeros(*extra_shape),
@@ -350,40 +384,16 @@ class SimplexSpace(MultiDimSpace, BoundDim):
 		return samples.squeeze(0) if sqz else samples
 
 
-	def standardize(self, vals):
-		return F.normalize(vals, p=1, dim=(-1) ** (not self.channel_first))
 
-
-	def unstandardize(self, vals):
-		return self.standardize(vals)
-
-
-
-class SphericalSpace(MultiDimSpace, UnboundDim):
-	def standardize(self, vals):
-		return F.normalize(vals, p=2,
-		                   dim=(-1) ** (not self.channel_first),  # 1 or -1
-		                   )
-
-
-	def unstandardize(self, vals):
-		return self.standardize(vals)
-
+class Sphere(LebesgueSpace, Unbound):
+	p = 2
 
 	def euclidean_difference(self, x, y, standardize=False):
 		return super().difference(x, y, standardize=False)
 
 
-	def geodesic_difference(self, x, y, standardize=False):
-		raise NotImplementedError
 
-
-	def difference(self, x, y, standardize=False):  # geodesic by default
-		return self.geodesic_difference(x, y, standardize=False)
-
-
-
-class SpatialSpace(MultiDimSpace):
+class Spatial(MultiDim): # order of some dimensions is not permutable (channel dim are permutable)
 	def __init__(self, channels, *size, shape=None, channel_first=True, **kwargs):
 		if isinstance(size, int):
 			size = (size,)
@@ -400,7 +410,7 @@ class SpatialSpace(MultiDimSpace):
 
 
 
-class SequenceSpace(SpatialSpace):
+class Sequence(Spatial):
 	def __init__(self, channels=1, length=None, **kwargs):
 		super().__init__(channels=channels, shape=(length,), **kwargs)
 		self.length = length
@@ -411,7 +421,7 @@ class SequenceSpace(SpatialSpace):
 
 
 
-class ImageSpace(SpatialSpace):
+class Image(Spatial):
 	def __init__(self, channels=1, height=None, width=None, **kwargs):
 		super().__init__(channels=channels, shape=(height, width), **kwargs)
 		self.height = height
@@ -423,7 +433,7 @@ class ImageSpace(SpatialSpace):
 
 
 
-class PixelSpace(ImageSpace, BoundDim):
+class Pixels(Image, Bound):
 	def __init__(self, channels=1, height=None, width=None, as_bytes=True, min=None, max=None, **kwargs):
 		min, max = (0, 255) if as_bytes else (0., 1.)
 		dtype = 'byte' if as_bytes else 'float'
@@ -432,7 +442,7 @@ class PixelSpace(ImageSpace, BoundDim):
 
 
 
-class VolumeSpace(SpatialSpace):
+class Volume(Spatial):
 	def __init__(self, channels=1, height=None, width=None, depth=None, **kwargs):
 		super().__init__(channels=channels, shape=(height, width, depth), **kwargs)
 		self.height = height
@@ -445,7 +455,7 @@ class VolumeSpace(SpatialSpace):
 
 
 
-class CategoricalDim(DimSpec):
+class Categorical(Dim):
 	def __init__(self, n, **kwargs):
 		if isinstance(n, (list, tuple, set)):
 			if isinstance(n, set):
@@ -513,7 +523,7 @@ class CategoricalDim(DimSpec):
 
 
 
-class BinaryDim(CategoricalDim):
+class Binary(Categorical):
 	def __init__(self, n=None, **kwargs):
 		super().__init__(n=2, **kwargs)
 
@@ -523,7 +533,7 @@ class BinaryDim(CategoricalDim):
 
 
 
-class JointSpace(DimSpec):
+class JointSpace(Dim):
 	def __init__(self, *dims, names=None, shape=None, max=None, min=None, **kwargs):
 		singles = []
 		dim_names = []
@@ -548,7 +558,7 @@ class JointSpace(DimSpec):
 		self._expanded_shape = expanded_shape
 		self._dim_indices = np.cumsum([0] + [len(dim) for dim in self.dims]).tolist()
 		self._dim_expanded_indices = np.cumsum([0] + [dim.expanded_len() for dim in self.dims]).tolist()
-		self._is_dense = any(1 for dim in dims if isinstance(dim, ContinuousDim))
+		self._is_dense = any(1 for dim in dims if isinstance(dim, Continuous))
 
 
 	def __str__(self):

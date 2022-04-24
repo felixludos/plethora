@@ -7,10 +7,11 @@ from omnibelt import unspecified_argument, duplicate_instance, InitWall
 class WrappedTensor(torch.Tensor):
 	@staticmethod
 	def __new__(cls, src, *args, **kwargs):
-		return super().__new__(cls, src)
+		return super().__new__(cls, src)#, *args, **kwargs)
 
 
-	def __init__(self, src, *args, **kwargs):
+	def __init__(self, src=None, *args, **kwargs):
+		# super().__init__(src, *args, **kwargs)
 		pass
 
 

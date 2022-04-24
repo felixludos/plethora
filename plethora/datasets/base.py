@@ -8,7 +8,7 @@ from omnibelt import unspecified_argument, duplicate_instance, md5, agnosticmeth
 import h5py as hf
 
 from ..framework.features import Prepared
-from ..framework import base, Rooted, Named, Device
+from ..framework import base, Rooted, Named#, Device
 from .buffers import AbstractFixedBuffer, Buffer, BufferView, HDFBuffer, \
 	AbstractCountableData, AbstractCountableDataView
 
@@ -54,20 +54,21 @@ class Batchable(base.AbstractData):
 class Epoched(AbstractCountableData, Batchable, base.Seeded): # TODO: check Seeded and Device integration
 	'''Batchable with a fixed total number of samples (implements __len__)'''
 	def __init__(self, batch_size=64, shuffle_batches=True, force_batch_size=True,
-	             batch_device=None, infinite=False, **kwargs):
+	             # batch_device=None,
+	             infinite=False, **kwargs):
 		super().__init__(**kwargs)
 
 		self._batch_size = batch_size
 		self._force_batch_size = force_batch_size
 		self._shuffle_batches = shuffle_batches
-		self._batch_device = batch_device
+		# self._batch_device = batch_device
 		self._infinite = infinite
 
 
-	def create_batch(self, sel=None, device=unspecified_argument, **kwargs):
-		if device is unspecified_argument:
-			device = self._batch_device
-		return super().create_batch(sel=sel, device=device, **kwargs)
+	# def create_batch(self, sel=None, device=unspecified_argument, **kwargs):
+	# 	if device is unspecified_argument:
+	# 		device = self._batch_device
+	# 	return super().create_batch(sel=sel, device=device, **kwargs)
 
 
 	def get_batch(self, shuffle=None, **kwargs):
@@ -508,8 +509,8 @@ class CachedView(SourceView, base.Container):
 			return super(base.AbstractData, self).get(name, default)
 		elif name in self:
 			val = super().get(name, **kwargs)
-			if self.device is not None:
-				val = val.to(self.device)
+			# if self.device is not None:
+			# 	val = val.to(self.device)
 			self[name] = val
 			return self[name]
 		return default
@@ -1035,11 +1036,11 @@ class EncodableDataset(ObservationDataset, RootedDataset):
 	
 	
 	class EncodedBuffer(BufferView):
-		def __init__(self, encoder=None, max_batch_size=64, encoder_device=None, **kwargs):
+		def __init__(self, encoder=None, max_batch_size=64, **kwargs):
 			super().__init__(**kwargs)
-			if encoder is not None and encoder_device is None:
-				encoder_device = getattr(encoder, 'device', None)
-			self._encoder_device = encoder_device
+			# if encoder is not None and encoder_device is None:
+			# 	encoder_device = getattr(encoder, 'device', None)
+			# self._encoder_device = encoder_device
 			self.encoder = encoder
 			self.max_batch_size = max_batch_size
 			
@@ -1050,26 +1051,26 @@ class EncodableDataset(ObservationDataset, RootedDataset):
 		@encoder.setter
 		def encoder(self, encoder):
 			self._encoder = encoder
-			if encoder is not None:
-				self.space = encoder.dout
-			self._encoder_device = getattr(encoder, 'device', self._encoder_device)
+			if encoder is not None and hasattr(encoder, 'dout'):
+				self.space = getattr(encoder, 'dout', None)
+			# self._encoder_device = getattr(encoder, 'device', self._encoder_device)
 
 
 		def _encode_raw_observations(self, observations):
-			device = observations.device
+			# device = observations.device
 			if len(observations) > self.max_batch_size:
 				samples = []
 				batches = observations.chunk(self.max_batch_size)
 				for batch in batches:
 					# with torch.no_grad():
-					if self._encoder_device is not None:
-						batch = batch.to(self._encoder_device)
-					samples.append(self.encoder.encode(batch).to(device))
+					# if self._encoder_device is not None:
+					# 	batch = batch.to(self._encoder_device)
+					samples.append(self.encoder.encode(batch))#.to(device))
 				return torch.cat(samples)
 			# with torch.no_grad():
-			if self._encoder_device is not None:
-				observations = observations.to(self._encoder_device)
-			return self.encoder.encode(observations).to(device)
+			# if self._encoder_device is not None:
+			# 	observations = observations.to(self._encoder_device)
+			return self.encoder.encode(observations)#.to(device)
 
 
 		def _get(self, sel=None, **kwargs):

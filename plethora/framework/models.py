@@ -335,13 +335,6 @@ class Metric(Criterion): # obeys triangle inequality
 
 
 
-# class Score(Function):
-# 	@agnosticmethod
-# 	def score(self, observation):
-# 		raise NotImplementedError
-
-
-
 class Interpolator(Function): # returns N steps to get from start to finish ("evenly spaces", by default)
 	@staticmethod
 	def interpolate(start, end, N):
@@ -355,6 +348,11 @@ class Estimator(Function):
 	@agnosticmethod
 	def predict(self, observation):
 		raise NotImplementedError
+
+
+
+class Autoencoder(Encoder, Decoder):
+	pass
 
 
 

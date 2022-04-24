@@ -54,7 +54,7 @@ class MLP(Model, Function, nn.Sequential):
 				dim = [dim]
 			if isinstance(dim, (list, tuple)):
 				return dim
-			if isinstance(dim, spaces.DimSpec):
+			if isinstance(dim, spaces.Dim):
 				return dim.expanded_shape
 			raise NotImplementedError(dim)
 

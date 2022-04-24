@@ -53,9 +53,32 @@ from .framework.extractors import Timm_Extractor
 from . import tasks
 # from .tasks import ReconstructionTask, FID_GenerationTask
 from plethora import datasets
+from plethora.framework import distributions
 
 @fig.Script('test')
 def _test_script(A):
+	mu = [-2, 0.]
+	mu = torch.zeros(3, 10)
+	sigma = .5
+
+	mu, sigma = torch.as_tensor(mu), torch.as_tensor(sigma)
+
+	dis = distributions.NormalDistribution(mu, sigma, seed=10)
+
+	print(dis.sample())
+	print(dis.generate())
+
+	m, s = dis.generate(2)
+
+	x = distributions.Categorical(logits=s, apply_constraints=True, seed=10)
+	y = x.to('cuda')
+
+	print(x.to('cuda'))
+
+	print(x, repr(x))
+	print(x)
+
+	return
 
 	# dataset = datasets.Shapes3D(download=False, mode='test')
 	#

@@ -209,30 +209,14 @@ class Function(Device):
 	
 
 
-class Container(Device, OrderedDict):
+class Container(OrderedDict):
 	def _find_missing(self, key):
 		raise KeyError(key)
 
 
-	def _to(self, device, **kwargs):
-		for key, val in self.items():
-			if isinstance(val, (Device, torch.Tensor)):
-				self[key] = val.to(device)
-
-
-	# def _package(self, data):
-	# 	return data
-
-
-	# def get(self, key, default=None):
-	# 	try:
-	# 		val = self[key]
-	# 	except KeyError:
-	# 		return default
-	# 	return self._package(val)
-
 	class _missing: # flag for missing items
 		pass
+
 
 	def __getitem__(self, item):
 		try:
@@ -254,6 +238,15 @@ class Container(Device, OrderedDict):
 
 	def __repr__(self):
 		return str(self)
+
+
+
+class DevicedContainer(Device, Container):
+	def _to(self, device, **kwargs):
+		for key, val in self.items():
+			if isinstance(val, (Device, torch.Tensor)):
+				self[key] = val.to(device)
+
 
 
 

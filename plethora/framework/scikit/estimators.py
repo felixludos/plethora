@@ -174,9 +174,9 @@ class Regressor(AbstractSupervised):
 		})
 
 		# relative to prior
-		if isinstance(dout, spaces.BoundDim):
+		if isinstance(dout, spaces.Bound):
 			mx_error = dout.range
-			if isinstance(dout, spaces.PeriodicDim):
+			if isinstance(dout, spaces.Periodic):
 				mx_error /= 2
 			avg_error = mx_error / 2 # assuming a uniform distribution
 		else:

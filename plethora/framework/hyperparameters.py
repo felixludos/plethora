@@ -27,7 +27,7 @@ class Hyperparameter(property, classdescriptor):
 		self.default = default
 		self.cache = cache
 		if space is not None and isinstance(space, (list, tuple, set)):
-			space = spaces.CategoricalDim(space)
+			space = spaces.Categorical(space)
 		self.space = space
 		self.required = required
 		self.fixed = fixed

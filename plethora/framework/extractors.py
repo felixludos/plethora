@@ -78,7 +78,7 @@ class Timm_Extractor(Extractor, Rooted, Device, nn.Module):
 	def _infer_dim(self, din=None):
 		dout = None
 		if din is not None:
-			Cin, Hin, Win = din.shape if isinstance(din, spaces.DimSpec) else din
+			Cin, Hin, Win = din.shape if isinstance(din, spaces.Dim) else din
 			if Cin != 3:
 				self._fix_channels = True
 			factor = self.model.feature_info[-1]['reduction']
@@ -87,9 +87,9 @@ class Timm_Extractor(Extractor, Rooted, Device, nn.Module):
 			if Win is not None:
 				Wout = int(np.ceil(Win/factor))
 			Cout = self.model.num_features
-			din = din if isinstance(din, spaces.ImageSpace) else spaces.ImageSpace(Cin, Hin, Win)
-			dout = spaces.UnboundDim(shape=(Cout,)) if self.pool is not None \
-				else spaces.ImageSpace(Cout, Hout, Wout)
+			din = din if isinstance(din, spaces.Image) else spaces.Image(Cin, Hin, Win)
+			dout = spaces.Unbound(shape=(Cout,)) if self.pool is not None \
+				else spaces.Image(Cout, Hout, Wout)
 		return din, dout
 
 
@@ -98,6 +98,8 @@ class Timm_Extractor(Extractor, Rooted, Device, nn.Module):
 
 
 	def forward(self, x):
+		device = x.device
+		x = x.to(self.device)
 		if self._fix_channels and x.shape[1] != 3:
 			if x.shape[1] == 1:
 				x = torch.cat([x]*3, 1)
@@ -108,7 +110,7 @@ class Timm_Extractor(Extractor, Rooted, Device, nn.Module):
 		if self.pool is not None:
 			f = self.pool(f)
 			f = f.view(f.size(0), -1)
-		return f
+		return f.to(device)
 
 
 

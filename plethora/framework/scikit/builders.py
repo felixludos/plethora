@@ -13,7 +13,7 @@ class AbstractScikitBuilder(ModelBuilder):
 
 
 	def create_regressor(self, din, dout):
-		if isinstance(dout, spaces.PeriodicDim):
+		if isinstance(dout, spaces.Periodic):
 			return self.create_periodic(din, dout)
 		return self.create_sequential(din, dout)
 
@@ -21,7 +21,7 @@ class AbstractScikitBuilder(ModelBuilder):
 	Periodized = Periodized
 	def create_periodic(self, din, dout, component_dim=None):
 		if component_dim is None:
-			component_dim = spaces.BoundDim(-1,1)
+			component_dim = spaces.Bound(-1, 1)
 		return self.Periodized([self.create_regressor(din=din, dout=component_dim),
 		                        self.create_regressor(din=din, dout=component_dim)])
 
@@ -57,10 +57,10 @@ class AbstractScikitBuilder(ModelBuilder):
 		if isinstance(dout, spaces.JointSpace):
 			return self.create_joint(din, dout, [self.build(din=din, dout=dim) for dim in dout])
 
-		elif isinstance(dout, spaces.CategoricalDim):
+		elif isinstance(dout, spaces.Categorical):
 			return self.create_classifier(din, dout)
 
-		elif isinstance(dout, spaces.ContinuousDim):
+		elif isinstance(dout, spaces.Continuous):
 			return self.create_regressor(din, dout)
 
 		raise self.InvalidDimError(din=din, dout=dout)

@@ -8,3 +8,4 @@ from .hyperparameters import Hyperparameter, Parametrized, hparam, inherit_hpara
 from .models import Encoder, Decoder, Generator, Discriminator, Criterion, Metric, Extractor, Interpolator, \
 	Estimator, Quantizer, Compressor, PathCriterion
 from .nn import *
+from . import wrappers as wrapped
