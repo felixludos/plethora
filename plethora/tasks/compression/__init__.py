@@ -11,7 +11,7 @@ except ImportError:
 	          'and then copied using the "community-source" script).')
 else:
 	del bb
-	from .task import LosslessCompressionTask, BitsBackCompressionTask
+	from .lossless import LosslessCompressionTask, BitsBackCompressionTask
 
 del prt, get_printer
 

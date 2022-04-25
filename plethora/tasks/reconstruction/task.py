@@ -53,7 +53,7 @@ class ReconstructionTask(AbstractReconstructionTask):
 	def encode(self, observation):
 		if self.encoder is None:
 			return observation
-		return self.encoder(observation)
+		return self.encoder.encode(observation)
 
 
 	@agnosticmethod

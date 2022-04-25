@@ -49,36 +49,38 @@ from tqdm import tqdm
 from omnilearn import models
 from .datasets import MNIST
 from .framework import Criterion
+from .framework.util import spaces
 from .framework.extractors import Timm_Extractor
 from . import tasks
+from .framework import wrapped
 # from .tasks import ReconstructionTask, FID_GenerationTask
 from plethora import datasets
 from plethora.framework import distributions
 
 @fig.Script('test')
 def _test_script(A):
-	mu = [-2, 0.]
-	mu = torch.zeros(3, 10)
-	sigma = .5
-
-	mu, sigma = torch.as_tensor(mu), torch.as_tensor(sigma)
-
-	dis = distributions.NormalDistribution(mu, sigma, seed=10)
-
-	print(dis.sample())
-	print(dis.generate())
-
-	m, s = dis.generate(2)
-
-	x = distributions.Categorical(logits=s, apply_constraints=True, seed=10)
-	y = x.to('cuda')
-
-	print(x.to('cuda'))
-
-	print(x, repr(x))
-	print(x)
-
-	return
+	# mu = [-2, 0.]
+	# mu = torch.zeros(3, 10)
+	# sigma = .5
+	#
+	# mu, sigma = torch.as_tensor(mu), torch.as_tensor(sigma)
+	#
+	# dis = distributions.NormalDistribution(mu, sigma, seed=10)
+	#
+	# print(dis.sample())
+	# print(dis.generate())
+	#
+	# m, s = dis.generate(2)
+	#
+	# x = distributions.Categorical(logits=s, apply_constraints=True, seed=10)
+	# y = x.to('cuda')
+	#
+	# print(x.to('cuda'))
+	#
+	# print(x, repr(x))
+	# print(x)
+	#
+	# return
 
 	# dataset = datasets.Shapes3D(download=False, mode='test')
 	#
@@ -102,7 +104,7 @@ def _test_script(A):
 
 	device = 'cuda'
 
-	dataset = datasets.Shapes3D(batch_device=device, download=False, mode='train')
+	dataset = datasets.Shapes3D(download=False, mode='train')
 	# dataset = MNIST(batch_device=device, batch_size=200)
 	len(dataset), dataset.din, dataset.dout
 	dataset.prepare();
@@ -120,13 +122,12 @@ def _test_script(A):
 
 	latent_dim = 10
 
-	enc = models.make_MLP(dataset.din.shape, latent_dim).to(device)
-	enc.device = device
-	enc.encode = enc.forward
-
-	dec = models.make_MLP(latent_dim, dataset.din.shape, output_nonlin='sigmoid').to(device)
-	dec.device = device
-	dec.decode = dec.forward
+	enc = wrapped.Encoder(models.make_MLP(dataset.din.shape, latent_dim).to(device),
+	                      din=dataset.din, din_device=device,
+	                      dout=spaces.Unbound(latent_dim), dout_device='cpu')
+	dec = wrapped.Decoder(models.make_MLP(latent_dim, dataset.din.shape, output_nonlin='sigmoid').to(device),
+	                      dout=spaces.Unbound(latent_dim), din_device=device,
+	                      din=dataset.din, dout_device='cpu')
 
 	def generate(N, gen=None):
 		z = torch.randn(N, latent_dim, generator=gen).to(device)
@@ -137,16 +138,16 @@ def _test_script(A):
 
 	# criterion = MSE()
 
-	task = tasks.InferenceTask(dataset=dataset, pbar=tqdm, num_samples=1000,
-	                          encoder=enc)
+	# task = tasks.InferenceTask(dataset=dataset, pbar=tqdm, num_samples=1000,
+	#                           encoder=enc)
 
 	# task = tasks.PR_GenerationTask(dataset=dataset, pbar=tqdm,
 	#                           num_samples=10000, batch_size=100,
 	#                           generator=dec, extractor=extractor)
 
-	# task = tasks.ReconstructionTask(dataset=dataset, pbar=tqdm, criterion_name='lpips',
-	#                           num_samples=1000, batch_size=100,
-	#                           encoder=enc, decoder=dec)
+	task = tasks.ReconstructionTask(dataset=dataset, pbar=tqdm, criterion_name='ms-ssim',
+	                          num_samples=1000, batch_size=100,
+	                          encoder=enc, decoder=dec)
 
 	with torch.no_grad():
 		# out = task.compute(batch)

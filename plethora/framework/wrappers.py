@@ -9,8 +9,9 @@ from .models import Extractor as _Extractor, \
 	Metric as _Metric, \
 	Interpolator as _Interpolator, \
 	Estimator as _Estimator, \
-	Quantizer as _Quantizer, \
+	Augmentation as _Augmentation, \
 	Compressor as _Compressor, \
+	Decompressor as _Decompressor, \
 	PathCriterion as _PathCriterion, \
 	Function as _Function
 
@@ -47,14 +48,14 @@ class _ImplicitModel(_Function, _Device):
 
 
 
-class _ImplicitInvertibleModel(_ImplicitModel):
-	def __init__(self, fn, ifn=None, **kwargs):
-		super().__init__(fn, **kwargs)
-		self.ifn = ifn
-
-
-	def _wrapped_inv_call(self, *args):
-		return self._process_output(self.fn(*map(self._process_input, args)))
+# class _ImplicitInvertibleModel(_ImplicitModel):
+# 	def __init__(self, fn, ifn=None, **kwargs):
+# 		super().__init__(fn, **kwargs)
+# 		self.ifn = ifn
+#
+#
+# 	def _wrapped_inv_call(self, *args):
+# 		return self._process_output(self.fn(*map(self._process_input, args)))
 
 
 
@@ -112,25 +113,21 @@ class Estimator(_Estimator, _ImplicitModel):
 
 
 
-class Quantizer(_Quantizer, _ImplicitInvertibleModel):
-	def quantize(self, observation):
+class Augmentation(_Augmentation, _ImplicitModel):
+	def augment(self, observation):
 		return self._wrapped_call(observation)
 
 
-	def unquantize(self, observation):
-		if self.ifn is None:
-			return observation
-		return self._wrapped_inv_call(observation)
 
-
-
-class Compressor(_Compressor, _ImplicitInvertibleModel):
+class Compressor(_Compressor, _ImplicitModel):
 	def compress(self, observation):
 		return self.fn(self._process_input(observation))
 
 
+
+class Decompressor(_Decompressor, _ImplicitModel):
 	def decompress(self, data):
-		return self._process_output(self.ifn(data))
+		return self._process_output(self.fn(data))
 
 
 

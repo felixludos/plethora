@@ -351,19 +351,14 @@ class Estimator(Function):
 
 
 
-class Autoencoder(Encoder, Decoder):
-	pass
+# class Autoencoder(Encoder, Decoder):
+# 	pass
 
 
 
-class Quantizer(Function):
+class Augmentation(Function):
 	@agnosticmethod
-	def quantize(self, observation):
-		raise NotImplementedError
-
-
-	@agnosticmethod
-	def unquantize(self, observation):
+	def augment(self, observation):
 		raise NotImplementedError
 
 
@@ -374,6 +369,8 @@ class Compressor(Function):
 		raise NotImplementedError
 
 
+
+class Decompressor(Function):
 	@staticmethod
 	def decompress(data):
 		raise NotImplementedError

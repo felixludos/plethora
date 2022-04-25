@@ -1,51 +1,13 @@
 import torch
 from omnibelt import get_printer, agnosticmethod
-from ..base import Task, BatchedTask, SimpleEvaluationTask
-
 from ...framework import hparam, inherit_hparams, models
+
+from .task import AbstractLosslessCompressionTask
 from .bits_back import BitsBackCompressor
 
-prt = get_printer(__file__)
 
 
-
-class AbstractLosslessCompressionTask(SimpleEvaluationTask):
-
-	strict_verify = False
-
-	@agnosticmethod
-	def _compute_step(self, info):
-		self._compress(info)
-		if self.strict_verify:
-			self._decompress(info)
-		return info
-
-
-	@staticmethod
-	def _compress(info):
-		raise NotImplementedError
-
-
-	class DecompressFailed(Exception):
-		pass
-
-
-	@agnosticmethod
-	def _decompress(self, info):
-		raise self.DecompressFailed
-
-
-	@agnosticmethod
-	def aggregate(self, info):
-		info = super().aggregate(info)
-		if not self.strict_verify:
-			self._decompress(info)
-		return info
-
-
-
-
-class LosslessCompressionTask(AbstractLosslessCompressionTask, SimpleEvaluationTask):
+class LosslessCompressionTask(AbstractLosslessCompressionTask):
 	score_key = 'bpd'
 
 	observation_key = 'observation'
@@ -54,6 +16,7 @@ class LosslessCompressionTask(AbstractLosslessCompressionTask, SimpleEvaluationT
 
 
 	compressor = hparam(module=models.Compressor)
+	decompressor = hparam(module=models.Decompressor)
 
 
 	@agnosticmethod
@@ -63,7 +26,7 @@ class LosslessCompressionTask(AbstractLosslessCompressionTask, SimpleEvaluationT
 
 	@agnosticmethod
 	def decompress(self, data):
-		return self.compressor.decompress(data)
+		return self.decompressor.decompress(data)
 
 
 	@agnosticmethod
@@ -116,10 +79,9 @@ class BitsBackCompressionTask(LosslessCompressionTask):
 		                          beta_confidence=self.beta_confidence, default_scale=self.default_scale)
 
 
-
-
-
-
+	@hparam()
+	def decompressor(self):
+		return self.compressor
 
 
 
