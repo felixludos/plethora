@@ -257,8 +257,10 @@ class Bound(Continuous):
 
 
 class Unbound(Continuous):
-	def __init__(self, min=None, max=None, **kwargs):
-		super().__init__(min=None, max=None, **kwargs)
+	def __init__(self, shape=None, min=None, max=None, **kwargs):
+		if isinstance(shape, int):
+			shape = shape,
+		super().__init__(shape=shape, min=None, max=None, **kwargs)
 
 
 	def __str__(self):

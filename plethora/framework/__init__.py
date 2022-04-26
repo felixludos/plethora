@@ -7,5 +7,6 @@ from .hyperparameters import Hyperparameter, Parametrized, ModuleParametrized, h
 from .hyperparameters import Hyperparameter, Parametrized, hparam, inherit_hparams
 from .models import Encoder, Decoder, Generator, Discriminator, Criterion, Metric, Extractor, Interpolator, \
 	Estimator, Quantizer, Compressor, PathCriterion
+# from .distributions import Distribution, DistributionTensor
 from .nn import *
 from . import wrappers as wrapped

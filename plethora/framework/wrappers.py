@@ -10,8 +10,9 @@ from .models import Extractor as _Extractor, \
 	Interpolator as _Interpolator, \
 	Estimator as _Estimator, \
 	Augmentation as _Augmentation, \
+	Invertible as _Invertible, \
 	Compressor as _Compressor, \
-	Decompressor as _Decompressor, \
+	Quantizer as _Quantizer, \
 	PathCriterion as _PathCriterion, \
 	Function as _Function
 
@@ -48,14 +49,14 @@ class _ImplicitModel(_Function, _Device):
 
 
 
-# class _ImplicitInvertibleModel(_ImplicitModel):
-# 	def __init__(self, fn, ifn=None, **kwargs):
-# 		super().__init__(fn, **kwargs)
-# 		self.ifn = ifn
-#
-#
-# 	def _wrapped_inv_call(self, *args):
-# 		return self._process_output(self.fn(*map(self._process_input, args)))
+class _ImplicitInvertibleModel(_ImplicitModel):
+	def __init__(self, fn, ifn=None, **kwargs):
+		super().__init__(fn, **kwargs)
+		self.ifn = ifn
+
+
+	def _wrapped_inv_call(self, *args):
+		return self._process_output(self.fn(*map(self._process_input, args)))
 
 
 
@@ -119,21 +120,40 @@ class Augmentation(_Augmentation, _ImplicitModel):
 
 
 
-class Compressor(_Compressor, _ImplicitModel):
+class PathCriterion(_PathCriterion, Criterion):
+	def compare_path(self, path1, path2):
+		return self._wrapped_call(path1, path2)
+
+
+
+class Invertible(_Invertible, _ImplicitInvertibleModel):
+	def forward(self, observation):
+		return self._wrapped_call(observation)
+
+
+	def inverse(self, observation):
+		return self._wrapped_inv_call(observation)
+
+
+
+class Compressor(_Compressor, _ImplicitInvertibleModel):
 	def compress(self, observation):
 		return self.fn(self._process_input(observation))
 
 
-
-class Decompressor(_Decompressor, _ImplicitModel):
 	def decompress(self, data):
-		return self._process_output(self.fn(data))
+		return self._process_output(self.ifn(data))
 
 
 
-class PathCriterion(_PathCriterion, Criterion):
-	def compare_path(self, path1, path2):
-		return self._wrapped_call(path1, path2)
+class Quantizer(_Quantizer, _ImplicitInvertibleModel):
+	def quantize(self, observation):
+		return self._wrapped_call(observation)
+
+
+	def dequantize(self, observation):
+		return self._wrapped_inv_call(observation)
+
 
 
 

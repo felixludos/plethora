@@ -355,6 +355,17 @@ class Estimator(Function):
 # 	pass
 
 
+class Invertible(Function):
+	@agnosticmethod
+	def forward(self, observation):
+		raise NotImplementedError
+
+
+	@agnosticmethod
+	def inverse(self, observation):
+		raise NotImplementedError
+
+
 
 class Augmentation(Function):
 	@agnosticmethod
@@ -369,10 +380,20 @@ class Compressor(Function):
 		raise NotImplementedError
 
 
-
-class Decompressor(Function):
 	@staticmethod
 	def decompress(data):
+		raise NotImplementedError
+
+
+
+class Quantizer(Function):
+	@staticmethod
+	def quantize(observation): # generally "removes" noise
+		raise NotImplementedError
+
+
+	@staticmethod
+	def dequantize(observation): # generally adds noise
 		raise NotImplementedError
 
 

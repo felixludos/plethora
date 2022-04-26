@@ -208,7 +208,7 @@ class SimpleEvaluationTask(BatchedTask):
 
 	@agnosticmethod
 	def heavy_results(self):
-		return {self.scores_key, *super().heavy_results()}
+		return {f'full_{self.scores_key}', *super().heavy_results()}
 	
 
 	@agnosticmethod
@@ -218,7 +218,7 @@ class SimpleEvaluationTask(BatchedTask):
 		scores = info.aggregate(self.scores_key)
 
 		info.update({
-			self.scores_key: scores,
+			f'full_{self.scores_key}': scores,
 			'mean': scores.mean().item(),
 			'max': scores.max().item(),
 			'min': scores.min().item(),

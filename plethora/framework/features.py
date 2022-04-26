@@ -77,51 +77,15 @@ class DeviceContainer(Device):
 
 class Seeded:
 	_seed = None
-	def __init_subclass__(cls, **kwargs):
-		super().__init_subclass__(**kwargs)
-		cls.gen = None
-		cls.gen = cls.create_rng(seed=cls._seed)
+	gen = None
 
-
-	def __init__(self, *args, gen=unspecified_argument, seed=unspecified_argument, **kwargs): # TODO clean up!
+	def __init__(self, *args, gen=None, seed=None, **kwargs):
 		super().__init__(*args, **kwargs)
-		# if gen is unspecified_argument:
-		# 	if seed is unspecified_argument:
-		# 		seed = None
-
-
-		if seed is unspecified_argument:
-			if gen is not None:
-				self.seed = None
-				self.gen = gen
+		if gen is None:
+			self._seed = None
+			self.gen = gen
 		else:
 			self.seed = seed
-
-		if seed is unspecified_argument:
-			seed = self.__class__._seed
-		self.seed = seed
-		if gen is unspecified_argument:
-			gen = self.create_rng(base_gen=self.gen, seed=seed)
-		if gen is not None:
-			self.gen = gen
-		self.seed = seed
-		self.gen = gen
-
-
-	@classmethod
-	def gen_random_seed(cls, gen=None):
-		if gen is None:
-			gen = cls.gen
-		return util.gen_random_seed(gen)
-
-
-	@classmethod
-	def create_rng(cls, seed=None, base_gen=None):
-		if seed is None:
-			seed = cls.gen_random_seed(base_gen)
-		gen = torch.Generator()
-		gen.manual_seed(seed)
-		return gen
 
 
 	@property
@@ -133,6 +97,83 @@ class Seeded:
 		# 	seed = util.gen_random_seed(self.gen)
 		self._seed = seed
 		self.gen = self.create_rng(seed=seed)
+
+
+	@agnosticmethod
+	def gen_random_seed(self, gen=None):
+		if gen is None:
+			gen = self.gen
+		return util.gen_random_seed(gen)
+
+
+	@agnosticmethod
+	def create_rng(self, seed=None, base_gen=None):
+		if seed is None:
+			seed = self.gen_random_seed(base_gen)
+		gen = torch.Generator()
+		gen.manual_seed(seed)
+		return gen
+
+
+
+# class Seeded:
+# 	_seed = None
+# 	def __init_subclass__(cls, **kwargs):
+# 		super().__init_subclass__(**kwargs)
+# 		cls.gen = None
+# 		cls.gen = cls.create_rng(seed=cls._seed)
+#
+#
+# 	def __init__(self, *args, gen=unspecified_argument, seed=unspecified_argument, **kwargs): # TODO clean up!
+# 		super().__init__(*args, **kwargs)
+# 		# if gen is unspecified_argument:
+# 		# 	if seed is unspecified_argument:
+# 		# 		seed = None
+#
+#
+# 		if seed is unspecified_argument:
+# 			if gen is not None:
+# 				self.seed = None
+# 				self.gen = gen
+# 		else:
+# 			self.seed = seed
+#
+# 		if seed is unspecified_argument:
+# 			seed = self.__class__._seed
+# 		self.seed = seed
+# 		if gen is unspecified_argument:
+# 			gen = self.create_rng(base_gen=self.gen, seed=seed)
+# 		if gen is not None:
+# 			self.gen = gen
+# 		self.seed = seed
+# 		self.gen = gen
+#
+#
+# 	@classmethod
+# 	def gen_random_seed(cls, gen=None):
+# 		if gen is None:
+# 			gen = cls.gen
+# 		return util.gen_random_seed(gen)
+#
+#
+# 	@classmethod
+# 	def create_rng(cls, seed=None, base_gen=None):
+# 		if seed is None:
+# 			seed = cls.gen_random_seed(base_gen)
+# 		gen = torch.Generator()
+# 		gen.manual_seed(seed)
+# 		return gen
+#
+#
+# 	@property
+# 	def seed(self):
+# 		return self._seed
+# 	@seed.setter
+# 	def seed(self, seed):
+# 		# if seed is None:
+# 		# 	seed = util.gen_random_seed(self.gen)
+# 		self._seed = seed
+# 		self.gen = self.create_rng(seed=seed)
 
 
 

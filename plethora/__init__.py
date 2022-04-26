@@ -1,9 +1,5 @@
 __version__ = "0.1"
 
-import sys, os, shutil
-from pathlib import Path
-
-import omnifig as fig
 
 from . import tasks
 from . import community
@@ -11,38 +7,10 @@ from .framework import util
 from .datasets import toy, mnist
 
 
+# Testing
 
-_PLETHORA_COMMUNITY_PATH = Path(__file__).parents[0] / 'community'
 
-@fig.AutoScript('community-source', description='Copy source directory to the community package')
-def _download_community_directory(name, path, src_desc=None, silent=False):
-	path = Path(path)
-	if not path.is_dir():
-		raise FileNotFoundError(str(path))
-
-	community_path = _PLETHORA_COMMUNITY_PATH
-	if not community_path.is_dir():
-		community_path.mkdir(exist_ok=True)
-		(community_path/'__init__.py').touch()
-
-	dest = _PLETHORA_COMMUNITY_PATH / name
-	dest.mkdir(exist_ok=True)
-
-	if src_desc is None:
-		src_desc = str(path)
-
-	init_path = dest / '__init__.py'
-	with init_path.open('a+') as f:
-		f.write(f'# This directory was copied from {src_desc}\n')
-
-	bad = {str(path / '.git'): ['objects']}
-	ignore_bad_dirs = lambda d,fs: bad.get(d, [])
-
-	shutil.copytree(str(path), str(dest), dirs_exist_ok=True, ignore=ignore_bad_dirs)
-	if not silent:
-		print(f'{str(path)} has been copied to the community package "{name}".')
-	return dest
-
+import omnifig as fig
 import torch
 from tqdm import tqdm
 
@@ -57,8 +25,13 @@ from .framework import wrapped
 from plethora import datasets
 from plethora.framework import distributions
 
+from plethora.community import download_bits_back
+
 @fig.Script('test')
 def _test_script(A):
+	# download_bits_back()
+	# return
+
 	# mu = [-2, 0.]
 	# mu = torch.zeros(3, 10)
 	# sigma = .5
@@ -126,8 +99,8 @@ def _test_script(A):
 	                      din=dataset.din, din_device=device,
 	                      dout=spaces.Unbound(latent_dim), dout_device='cpu')
 	dec = wrapped.Decoder(models.make_MLP(latent_dim, dataset.din.shape, output_nonlin='sigmoid').to(device),
-	                      dout=spaces.Unbound(latent_dim), din_device=device,
-	                      din=dataset.din, dout_device='cpu')
+	                      din=spaces.Unbound(latent_dim), din_device=device,
+	                      dout=dataset.din, dout_device='cpu')
 
 	def generate(N, gen=None):
 		z = torch.randn(N, latent_dim, generator=gen).to(device)
@@ -145,9 +118,20 @@ def _test_script(A):
 	#                           num_samples=10000, batch_size=100,
 	#                           generator=dec, extractor=extractor)
 
-	task = tasks.ReconstructionTask(dataset=dataset, pbar=tqdm, criterion_name='ms-ssim',
-	                          num_samples=1000, batch_size=100,
-	                          encoder=enc, decoder=dec)
+	# task = tasks.ReconstructionTask(dataset=dataset, pbar=tqdm, criterion_name='ms-ssim',
+	#                           num_samples=1000, batch_size=100,
+	#                           encoder=enc, decoder=dec)
+
+	task = tasks.RoundingCompressionTask(dataset=dataset, pbar=tqdm, num_samples=1000, batch_size=100,
+	                                     sigfigs=3, compressor_name='lzma',
+	                                     encoder=enc, decoder=dec, criterion_name='ms-ssim')
+
+	# task = tasks.BitsBackCompressionTask(dataset=dataset, pbar=tqdm, num_samples=4, batch_size=2,
+	#                                      encoder=enc, decoder=dec, strict_verify=True)
+
+	# task = tasks.LosslessCompressionTask(dataset=dataset, pbar=tqdm, num_samples=1000, batch_size=100,
+	#                                      compressor_name='lzma')
+
 
 	with torch.no_grad():
 		# out = task.compute(batch)

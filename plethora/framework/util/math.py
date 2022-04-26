@@ -29,5 +29,19 @@ def angle_diff(angle1, angle2, period=2*np.pi):
 
 
 
+def round_sigfigs(x, sigfigs=3):
+	mag = x.abs().log10().floor()
+	mag[mag.isinf()] = 0
+	reg = 10 ** (sigfigs - mag - 1)
+	return x.mul(reg).round().div(reg)
+
+
+def sigfig_noise(x, n, sigfigs=3):
+	mag = x.abs().log10().floor()
+	mag[mag.isinf()] = 0
+	reg = 10 ** (sigfigs - mag - 1)
+	return x.mul(reg).add(n).div(reg)
+
+
 
 

@@ -13,9 +13,18 @@ from omnibelt import get_printer
 # import omnifig as fig
 
 
+
+from omnibelt import get_printer, agnosticmethod
+from ...framework import hparam, inherit_hparams, models
+from .lossless import LosslessCompressionTask, LosslessCompressor
+
+from .task import AbstractLosslessCompressionTask
+# from .bits_back import BitsBackCompressor
+
+
 # The code in these files can be found at https://github.com/bits-back/bits-back
-from ...community.bits_back import util
 from ...community.bits_back import rans
+from ...community.bits_back import util
 # from ...community.bits_back.torch_vae.tvae_beta_binomial import BetaBinomialVAE
 from ...community.bits_back.torch_vae import tvae_utils
 # from ...community.bits_back.torch_vae.torch_mnist_compress import run_compress
@@ -25,12 +34,42 @@ from ...community.bits_back.torch_vae import tvae_utils
 prt = get_printer(__file__)
 
 
-class BitsBackCompressor:
+
+class BitsBackCompressionTask(LosslessCompressionTask):
+
+	encoder = hparam(module=models.Encoder)
+	decoder = hparam(module=models.Decoder)
+
+	beta_confidence = hparam(1000)
+	default_scale = hparam(0.1)
+
+
+	@agnosticmethod
+	def encode(self, observation):
+		return self.encoder.encode(observation)
+
+
+	@agnosticmethod
+	def decode(self, latent):
+		return self.decoder.decode(latent)
+
+
+	@hparam(cache=True)
+	def compressor(self):
+		return BitsBackCompressor(self.encode, self.decode,
+		                          obs_shape=self.encoder.din.shape, latent_shape=self.decoder.din.shape,
+		                          encoder_device=self.encoder.device, decoder_device=self.decoder.device,
+		                          beta_confidence=self.beta_confidence, default_scale=self.default_scale)
+
+
+
+class BitsBackCompressor(LosslessCompressor):
 	def __init__(self, encode_fn, decode_fn, seed=None, obs_shape=None, latent_shape=None,
-	             encoder_in_shape=None, decoder_in_shape=None,
+	             encoder_in_shape=None, decoder_in_shape=None, as_bytes=False,
 	             device=None, encoder_device=None, decoder_device=None,
 	             output_distribution='beta', beta_confidence=1000, default_scale=0.1,
-	             obs_precision=14, q_precision=14, prior_precision=8):
+	             obs_precision=14, q_precision=14, prior_precision=8, **kwargs):
+		super().__init__(**kwargs)
 		# if latent_shape is None:
 		# 	latent_shape = getattr(encoder, 'latent_dim', encoder.dout)
 		# 	if isinstance(latent_shape, int):
@@ -43,6 +82,7 @@ class BitsBackCompressor:
 			encoder_in_shape = obs_shape
 		if decoder_in_shape is None:
 			decoder_in_shape = latent_shape
+		self._as_bytes = as_bytes
 		self.enc_in_shape, self.dec_in_shape = encoder_in_shape, decoder_in_shape
 		if len(latent_shape) == 1:
 			latent_shape = (1, *latent_shape)
@@ -170,18 +210,23 @@ class BitsBackCompressor:
 			if N is not None:
 				N -= 1
 		# self.state = state
-		imgs = torch.stack(imgs[::-1]).round().byte().view(-1, *self.decoder.dout).to(self.decoder.get_device())#.div(255)
+		imgs = torch.stack(imgs[::-1]).round().byte().view(-1, *self.enc_in_shape).cpu()#.div(255)
 		return state, imgs
 
 
 	def compress(self, images, state=None):
+		if not self._as_bytes:
+			images = images.mul(255).byte()
 		state = self.compress_append(images, state)
 		return self.state_to_bytes(state)
 
 
 	def decompress(self, data):
 		state = self.bytes_to_state(data)
-		return self.partial_decompress(state)[-1]
+		images = self.partial_decompress(state)[-1]
+		if not self._as_bytes:
+			images = images.float().div(255)
+		return images
 
 
 
