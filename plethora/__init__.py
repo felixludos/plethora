@@ -14,7 +14,7 @@ import omnifig as fig
 import torch
 from tqdm import tqdm
 
-from omnilearn import models
+from omnilearn import models, util as outil
 from .datasets import MNIST
 from .framework import Criterion
 from .framework.util import spaces
@@ -122,9 +122,9 @@ def _test_script(A):
 	#                           num_samples=1000, batch_size=100,
 	#                           encoder=enc, decoder=dec)
 
-	task = tasks.RoundingCompressionTask(dataset=dataset, pbar=tqdm, num_samples=1000, batch_size=100,
-	                                     sigfigs=3, compressor_name='lzma',
-	                                     encoder=enc, decoder=dec, criterion_name='ms-ssim')
+	# task = tasks.RoundingCompressionTask(dataset=dataset, pbar=tqdm, num_samples=1000, batch_size=100,
+	#                                      sigfigs=3, compressor_name='lzma',
+	#                                      encoder=enc, decoder=dec, criterion_name='ms-ssim')
 
 	# task = tasks.BitsBackCompressionTask(dataset=dataset, pbar=tqdm, num_samples=4, batch_size=2,
 	#                                      encoder=enc, decoder=dec, strict_verify=True)
@@ -132,6 +132,9 @@ def _test_script(A):
 	# task = tasks.LosslessCompressionTask(dataset=dataset, pbar=tqdm, num_samples=1000, batch_size=100,
 	#                                      compressor_name='lzma')
 
+	task = tasks.CorrelationMetricTask(dataset=dataset, pbar=tqdm, metric_name='l2',
+	                          num_samples=1000, batch_size=100,
+	                          encoder=enc)
 
 	with torch.no_grad():
 		# out = task.compute(batch)

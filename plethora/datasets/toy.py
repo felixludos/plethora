@@ -23,12 +23,12 @@ class SwissRollDataset(SyntheticDataset):
 
 		self._target_theta = target_theta
 
-		lbl_space = spaces.JointSpace(
+		lbl_space = spaces.Joint(
 			spaces.Bound(min=tmin, max=tmax),
 			spaces.Bound(min=0., max=1.),
 		)
 
-		obs_space = spaces.JointSpace(
+		obs_space = spaces.Joint(
 			spaces.Bound(min=-Ax * tmax, max=Ax * tmax),
 			spaces.Bound(min=0., max=self.Ay),
 			spaces.Bound(min=-Az * tmax, max=Az * tmax),
@@ -86,12 +86,12 @@ class HelixDataset(SyntheticDataset):
 		self.Rx, self.Ry, self.Rz = Rx, Ry, Rz
 		self.w = int(w) if periodic_strand else w
 
-		lbl_space = spaces.JointSpace(
+		lbl_space = spaces.Joint(
 			spaces.Periodic(min=-1., max=1.) if periodic_strand else spaces.Bound(min=-1., max=1.),
 			spaces.Categorical(n=n_helix),
 		)
 
-		obs_space = spaces.JointSpace(
+		obs_space = spaces.Joint(
 			spaces.Bound(min=-Rx, max=Rx),
 			spaces.Bound(min=-Ry, max=Ry),
 			spaces.Bound(min=-Rz, max=Rz),

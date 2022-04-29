@@ -8,7 +8,7 @@ from omnibelt import unspecified_argument, duplicate_instance, md5, agnosticmeth
 import h5py as hf
 
 from ..framework.features import Prepared
-from ..framework import base, Rooted, Named#, Device
+from ..framework import base, Rooted, Named, util#, Device
 from .buffers import AbstractFixedBuffer, Buffer, BufferView, HDFBuffer, \
 	AbstractCountableData, AbstractCountableDataView
 
@@ -728,7 +728,7 @@ class ObservationDataset(_ObservationInfo, Dataset):
 
 
 
-class _SupervisionInfo(_ObservationInfo):
+class _SupervisionInfo(util.Metric, _ObservationInfo):
 	@property
 	def dout(self):
 		return self.target_space
@@ -741,6 +741,18 @@ class _SupervisionInfo(_ObservationInfo):
 
 	def get_target(self, sel=None, **kwargs):
 		return self.get('target', sel=sel, **kwargs)
+
+
+	def difference(self, a, b, standardize=None):
+		return self.dout.difference(a, b, standardize=standardize)
+
+
+	def measure(self, a, b, standardize=None):
+		return self.dout.measure(a, b, standardize=standardize)
+
+
+	def distance(self, a, b, standardize=None):
+		return self.dout.distance(a, b, standardize=standardize)
 
 
 
@@ -813,7 +825,6 @@ class LabeledDataset(_LabeledInfo, SupervisedDataset):
 
 class _SyntheticInfo(_LabeledInfo):
 	_distinct_mechanisms = True
-	_standardize_scale = True
 
 
 	@property
@@ -831,18 +842,6 @@ class _SyntheticInfo(_LabeledInfo):
 		if not self._distinct_mechanisms:
 			return data
 		return self.label_space.transform(data, self.mechanism_space)
-
-
-	def difference(self, a, b, standardize=None): # TODO: link to metric space
-		if standardize is None:
-			standardize = self._standardize_scale
-		return self.mechanism_space.difference(a, b, standardize=standardize)
-
-
-	def distance(self, a, b, standardize=None):  # TODO: link to metric space
-		if standardize is None:
-			standardize = self._standardize_scale
-		return self.mechanism_space.distance(a, b, standardize=standardize)
 
 
 

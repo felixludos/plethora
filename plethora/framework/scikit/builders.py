@@ -54,7 +54,7 @@ class AbstractScikitBuilder(ModelBuilder):
 			if dout is None:
 				dout = source.dout
 
-		if isinstance(dout, spaces.JointSpace):
+		if isinstance(dout, spaces.Joint):
 			return self.create_joint(din, dout, [self.build(din=din, dout=dim) for dim in dout])
 
 		elif isinstance(dout, spaces.Categorical):

@@ -2,6 +2,7 @@
 
 import torch
 from omnibelt import agnosticmethod, unspecified_argument#, mix_into
+from . import util
 from .features import Seeded
 from .hyperparameters import Parametrized, ModuleParametrized, hparam, inherit_hparams
 from .base import Function, Container
@@ -323,12 +324,7 @@ class Criterion(Function):
 
 
 
-class Metric(Criterion): # obeys triangle inequality
-	@agnosticmethod
-	def distance(self, observation1, observation2):
-		raise NotImplementedError
-
-
+class Metric(Criterion, util.Metric): # obeys triangle inequality
 	@agnosticmethod
 	def compare(self, observation1, observation2):
 		return self.distance(observation1, observation2)

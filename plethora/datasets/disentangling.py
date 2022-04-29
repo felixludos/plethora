@@ -75,19 +75,19 @@ class dSprites(DownloadableHDF, SyntheticDataset):
 		_shape_names = ['square', 'ellipse', 'heart']
 		_dim_names = ['shape', 'scale', 'orientation', 'posX', 'posY']
 		self.register_buffer('label',
-		                     space=spaces.JointSpace(spaces.Categorical(_shape_names),
-		                                             spaces.Categorical(6),
-		                                             spaces.Categorical(40),
-		                                             spaces.Categorical(32),
-		                                             spaces.Categorical(32),
-		                                             names=_dim_names))
+		                     space=spaces.Joint(spaces.Categorical(_shape_names),
+		                                        spaces.Categorical(6),
+		                                        spaces.Categorical(40),
+		                                        spaces.Categorical(32),
+		                                        spaces.Categorical(32),
+		                                        names=_dim_names))
 		self.register_buffer('mechanism', TransformedBuffer(source=self.get_buffer('label')),
-		                     space=spaces.JointSpace(spaces.Categorical(_shape_names),
-		                                             spaces.Bound(0.5, 1.),
-		                                             spaces.Periodic(period=2 * np.pi),
-		                                             spaces.Bound(0., 1.),
-		                                             spaces.Bound(0., 1.),
-		                                             names=_dim_names))
+		                     space=spaces.Joint(spaces.Categorical(_shape_names),
+		                                        spaces.Bound(0.5, 1.),
+		                                        spaces.Periodic(period=2 * np.pi),
+		                                        spaces.Bound(0., 1.),
+		                                        spaces.Bound(0., 1.),
+		                                        names=_dim_names))
 
 
 	_source_url = 'https://github.com/deepmind/dsprites-dataset/raw/master/' \
@@ -151,21 +151,21 @@ class Shapes3D(DownloadableHDF, SyntheticDataset):
 		self.register_buffer('observation', ImageBuffer(),
 		                     space=spaces.Pixels(3, 64, 64, as_bytes=as_bytes))
 		self.register_buffer('mechanism',
-		                     space=spaces.JointSpace(spaces.Periodic(),
-		                                             spaces.Periodic(),
-		                                             spaces.Periodic(),
-		                                             spaces.Bound(0.75, 1.25),
-		                                             spaces.Categorical(_shape_names),
-		                                             spaces.Bound(-30., 30.),
-		                                             names=_all_label_names))
+		                     space=spaces.Joint(spaces.Periodic(),
+		                                        spaces.Periodic(),
+		                                        spaces.Periodic(),
+		                                        spaces.Bound(0.75, 1.25),
+		                                        spaces.Categorical(_shape_names),
+		                                        spaces.Bound(-30., 30.),
+		                                        names=_all_label_names))
 		self.register_buffer('label', TransformedBuffer(source=self.get_buffer('mechanism')),
-		                     space=spaces.JointSpace(spaces.Categorical(_hue_names),
-		                                             spaces.Categorical(_hue_names),
-		                                             spaces.Categorical(_hue_names),
-		                                             spaces.Categorical(8),
-		                                             spaces.Categorical(_shape_names),
-		                                             spaces.Categorical(15),
-		                                             names=_all_label_names))
+		                     space=spaces.Joint(spaces.Categorical(_hue_names),
+		                                        spaces.Categorical(_hue_names),
+		                                        spaces.Categorical(_hue_names),
+		                                        spaces.Categorical(8),
+		                                        spaces.Categorical(_shape_names),
+		                                        spaces.Categorical(15),
+		                                        names=_all_label_names))
 
 
 	_source_url = 'gs://3d-shapes/3dshapes.h5'
@@ -247,23 +247,23 @@ class MPI3D(ImageDataset, SyntheticDataset):
 		                     space=spaces.Pixels(3, 64, 64, as_bytes=as_bytes))
 
 		self.register_buffer('label',
-		                     space=spaces.JointSpace(spaces.Categorical(_colors),
-		                                             spaces.Categorical(_shapes),
-		                                             spaces.Categorical(['small', 'large']),
-		                                             spaces.Categorical(['top', 'center', 'bottom']),
-		                                             spaces.Categorical(_bg_color),
-		                                             spaces.Categorical(40),
-		                                             spaces.Categorical(40),
-		                                             names=_all_label_names))
+		                     space=spaces.Joint(spaces.Categorical(_colors),
+		                                        spaces.Categorical(_shapes),
+		                                        spaces.Categorical(['small', 'large']),
+		                                        spaces.Categorical(['top', 'center', 'bottom']),
+		                                        spaces.Categorical(_bg_color),
+		                                        spaces.Categorical(40),
+		                                        spaces.Categorical(40),
+		                                        names=_all_label_names))
 		self.register_buffer('mechanism', TransformedBuffer(source=self.get_buffer('label')),
-		                     space=spaces.JointSpace(spaces.Categorical(_colors),
-		                                             spaces.Categorical(_shapes),
-		                                             spaces.Bound(0., 1.),
-		                                             spaces.Bound(0., 1.),
-		                                             spaces.Categorical(_bg_color),
-		                                             spaces.Bound(0., 1.),
-		                                             spaces.Bound(0., 1.),
-		                                             names=_all_label_names))
+		                     space=spaces.Joint(spaces.Categorical(_colors),
+		                                        spaces.Categorical(_shapes),
+		                                        spaces.Bound(0., 1.),
+		                                        spaces.Bound(0., 1.),
+		                                        spaces.Categorical(_bg_color),
+		                                        spaces.Bound(0., 1.),
+		                                        spaces.Bound(0., 1.),
+		                                        names=_all_label_names))
 
 
 	_source_url = {

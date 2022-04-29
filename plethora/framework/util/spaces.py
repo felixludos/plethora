@@ -8,14 +8,14 @@ import numpy as np
 # import torch
 # from torch.nn import functional as F
 
-from .math import angle_diff
+from .math import angle_diff, Metric, Norm, Lp, L2, L1, L0, Linf
 # from .features import DeviceBase, Configurable
 
 
 # TODO: include dtypes
 
 
-class Dim(Packable):
+class Dim(Packable, Metric):
 	def __init__(self, min=None, max=None, shape=(1,), dtype=None, **kwargs):
 		
 		if isinstance(shape, int):
@@ -30,7 +30,8 @@ class Dim(Packable):
 
 
 	def __str__(self):
-		return f'{self.__class__.__name__}'
+		terms = ', '.join(map(str,self.shape)) if len(self) > 1 else ''
+		return f'{self.__class__.__name__}({terms})'
 
 
 	def __repr__(self):
@@ -106,18 +107,26 @@ class Dim(Packable):
 		return self.max - self.min
 
 
+	def difference(self, x, y, standardize=None):  # x-y
+		if standardize:
+			x, y = self.standardize(x), self.standardize(y)
+		return super().difference(x, y)
+
+
+	def distance(self, x, y, standardize=None):
+		if standardize:
+			x, y = self.standardize(x), self.standardize(y)
+		return super().distance(x, y)
+
+
+	def measure(self, x, y, standardize=None):
+		if standardize:
+			x, y = self.standardize(x), self.standardize(y)
+		return super().measure(x, y)
+
+
 	def transform(self, vals, spec):
 		return self.unstandardize(spec.standardize(vals))
-
-
-	def difference(self, x, y, standardize=False):  # x-y
-		x = self.standardize(x)
-		y = self.standardize(y)
-		return x - y
-
-
-	def distance(self, x, y, standardize=False):
-		return math.sqrt(sum(self.difference(x, y, standardize=standardize)**2))
 
 
 	def standardize(self, vals):
@@ -131,13 +140,10 @@ class Dim(Packable):
 
 class Continuous(Dim):
 	def sample(self, N=None, gen=None, seed=None):
-		
 		if seed is not None:
 			gen = torch.Generator()
 			gen.manual_seed(seed)
-		
-		# kwargs = {} if gen is None else {'gen': gen}
-		
+
 		sqz = N is None
 		if N is None:
 			N = 1
@@ -148,6 +154,11 @@ class Continuous(Dim):
 
 	def _sample(self, shape, generator):
 		return torch.randn(*shape, generator=generator)
+
+
+	def distance(self, x, y, standardize=None):
+		N = len(x) if len(x.shape) > 1 else 1
+		return self.difference(x, y, standardize=standardize).view(N, -1).norm(p=2, dim=1)
 
 
 
@@ -177,7 +188,7 @@ class HalfBound(Continuous):
 		terms = ('('+ ', '.join(map(str,self.shape))+'), ') if len(self) > 1 else ''
 		lim = f'min={self.min.mean().item():.3g}' \
 			if self.min is not None else f'max={self.max.mean().item():.3g}'
-		return f'HalfBound({terms}{lim})'
+		return f'{self.__class__.__name__}({terms}{lim})'
 
 
 	def standardize(self, vals):
@@ -188,7 +199,7 @@ class HalfBound(Continuous):
 		
 		vals = vals.clamp(min=self._epsilon)
 		if self._bound_type == 'soft':
-			vals = vals.exp().sub(1).log()
+			vals = vals.exp().sub(1).log() # TODO: test this
 		elif self._bound_type == 'chi':
 			vals = vals.sqrt()
 		elif self._bound_type == 'exp':
@@ -228,7 +239,7 @@ class Bound(Continuous):
 
 	def __str__(self):
 		terms = ('('+ ', '.join(map(str,self.shape))+'), ') if len(self) > 1 else ''
-		return f'Bound({terms}min={self.min.mean().item():.3g}, max={self.max.mean().item():.3g})'
+		return f'{self.__class__.__name__}({terms}min={self.min.mean().item():.3g}, max={self.max.mean().item():.3g})'
 
 
 	def _sample(self, shape, generator):
@@ -236,12 +247,6 @@ class Bound(Continuous):
 
 
 	def standardize(self, vals):
-		# v = vals.to(self.min)
-		# v2 = v.sub(self.min.unsqueeze(0))
-		# v3 = v2.div(self.range.unsqueeze(0))
-		# v4 = v3.clamp(min=self._epsilon, max=1 - self._epsilon)
-		# v5 = v4.to(vals)
-		# return v5
 		return vals.to(self.min).sub(self.min.unsqueeze(0)).div(self.range.unsqueeze(0)) \
 			.clamp(min=self._epsilon, max=1 - self._epsilon).to(vals)
 
@@ -251,9 +256,8 @@ class Bound(Continuous):
 			.mul(self.range.unsqueeze(0)).add(self.min.unsqueeze(0)).to(vals)
 
 
-	def difference(self, x, y, standardize=False):
-		return super().difference(x, y, standardize=standardize) * (self.range.unsqueeze(0) ** float(not standardize))
-
+	# def difference(self, x, y, standardize=None):
+	# 	return super().difference(x, y, standardize=standardize)# * (self.range.unsqueeze(0) ** float(not standardize))
 
 
 class Unbound(Continuous):
@@ -261,11 +265,6 @@ class Unbound(Continuous):
 		if isinstance(shape, int):
 			shape = shape,
 		super().__init__(shape=shape, min=None, max=None, **kwargs)
-
-
-	def __str__(self):
-		terms = ', '.join(map(str,self.shape)) if len(self) > 1 else ''
-		return f'Unbound({terms})'
 
 
 	def standardize(self, vals):
@@ -286,7 +285,7 @@ class Periodic(Bound):
 
 
 	def __str__(self):
-		return f'Periodic({self.period.mean().item():.3g})'
+		return f'{self.__class__.__name__}({self.period.mean().item():.3g})'
 
 
 	@property
@@ -309,8 +308,20 @@ class Periodic(Bound):
 		return self.unstandardize(torch.atan2(vals[..., 1], vals[..., 0]).div(2 * np.pi).remainder(1))
 
 
-	def difference(self, x, y, standardize=False):
-		return angle_diff(self.standardize(x), self.standardize(y), period=1.) * (self.period ** float(not standardize))
+	def difference(self, x, y, standardize=None):
+		if standardize is None or standardize: # by default, standardize
+			x, y = self.standardize(x), self.standardize(y)
+		return angle_diff(x, y, period=1.) * (self.period ** float(standardize is None))
+
+
+	def measure(self, x, y, standardize=None):
+		if standardize is None or standardize: # by default, standardize
+			x, y = self.standardize(x), self.standardize(y)
+		return super().measure(x, y)
+
+
+	def distance(self, x, y, standardize=None):
+		return super().distance(x, y, standardize=standardize is None or standardize)
 
 
 	def transform(self, vals, spec):
@@ -324,45 +335,57 @@ class Periodic(Bound):
 
 
 class MultiDim(Dim):
-	pass
+	def __init__(self, channels=None, dim=1, shape=None, **kwargs):
+		assert channels is not None or shape is not None, 'need a dimensionality of the topology'
+		super().__init__(shape=shape, **kwargs)
+		if channels is None:
+			channels = (0, *self.shape)[dim]
+		assert channels > 0, 'topology must have more than 0 channels'
+		self.dim = dim
+		self.channels = channels
+
+
+	def __len__(self):
+		return self.channels
+
+
+	def __str__(self):
+		return f'{self.__class__.__name__}({len(self)})'
+
 
 
 class Surface(MultiDim):
-	def __init__(self, k=None, dim=1, shape=None, **kwargs):
-		assert k is not None or shape is not None, 'need a dimensionality of the topology'
-		super().__init__(shape=shape, **kwargs)
-		if k is None:
-			k = (0, *self.shape)[dim]
-		assert k > 0, 'topology must have more than 0 dimensions'
-		self.dim = dim
-		self.k = k
-
-
-	def geodesic(self, x, y, standardize=False):
+	def geodesic(self, x, y, standardize=None):
 		raise NotImplementedError
 
 
-	def difference(self, x, y, standardize=False):
-		if standardize:
-			x, y = self.standardize(x), self.standardize(y)
-		return self.geodesic(x, y)
+	def distance(self, x, y, standardize=None):
+		return self.geodesic(x, y, standardize=standardize)
 
 
 
-class LebesgueSpace(Surface):
-	p = None
-
+class LebesgueSurface(Surface, Lp):
 	def standardize(self, vals):
-		return F.normalize(vals, p=self.norm, dim=self.dim)
+		return F.normalize(vals, p=self.p, dim=self.dim)
+
+
+	def __len__(self):
+		return self.channels - 1
 
 
 	def unstandardize(self, vals):
 		return self.standardize(vals)
 
 
+	def magnitude(self, x):
+		return super().magnitude(x, dim=self.dim)
 
-class Simplex(LebesgueSpace, Bound):
-	p = 1
+
+
+class Simplex(LebesgueSurface, Bound, L1):
+	def geodesic(self, x, y, standardize=None):
+		return super(Surface, self).distance(x, y, standardize=standardize)
+
 
 	def sample(self, N=None, **kwargs):  # from Donald B. Rubin, The Bayesian bootstrap Ann. Statist. 9, 1981, 130-134.
 		# discussed in https://cs.stackexchange.com/questions/3227/uniform-sampling-from-a-simplex
@@ -387,11 +410,19 @@ class Simplex(LebesgueSpace, Bound):
 
 
 
-class Sphere(LebesgueSpace, Unbound):
-	p = 2
+class Sphere(LebesgueSurface, Unbound, L2):
+	def geodesic_cos(self, x, y, standardize=None): # returns cos(theta)
+		if standardize:
+			x, y = self.standardize(x), self.standardize(y)
+		return x.mul(y).sum(self.dim)
 
-	def euclidean_difference(self, x, y, standardize=False):
-		return super().difference(x, y, standardize=False)
+
+	def geodesic(self, x, y, standardize=None): # theta: [0, pi]
+		return self.geodesic_cos(x, y, standardize=standardize).acos()#.div(np.pi/2)
+
+
+	def measure_euclidean(self, x, y, standardize=None):
+		return super(Surface, self).distance(x, y, standardize=standardize)
 
 
 
@@ -405,10 +436,13 @@ class Spatial(MultiDim): # order of some dimensions is not permutable (channel d
 		shape = (channels,) if size is None else (
 			(channels, *size) if channel_first else (*size, channels))
 
-		super().__init__(shape=shape, **kwargs)
+		super().__init__(channels=channels, shape=shape, **kwargs)
 		self.channel_first = channel_first
 		self.size = size
-		self.channels = channels
+
+
+	def __str__(self):
+		return f'{self.__class__.__name__}(C={self.channels}, size={self.size})'
 
 
 
@@ -416,10 +450,13 @@ class Sequence(Spatial):
 	def __init__(self, channels=1, length=None, **kwargs):
 		super().__init__(channels=channels, shape=(length,), **kwargs)
 		self.length = length
-	
-	
+
+	@property
+	def L(self):
+		return self.length
+
 	def __str__(self):
-		return f'Sequence(C={self.channels}, K={self.length})'
+		return f'{self.__class__.__name__}(C={self.channels}, L={self.length})'
 
 
 
@@ -429,9 +466,16 @@ class Image(Spatial):
 		self.height = height
 		self.width = width
 
+	@property
+	def H(self):
+		return self.height
+
+	@property
+	def W(self):
+		return self.width
 
 	def __str__(self):
-		return f'Image(C={self.channels}, H={self.height}, W={self.width})'
+		return f'{self.__class__.__name__}(C={self.channels}, H={self.height}, W={self.width})'
 
 
 
@@ -451,9 +495,20 @@ class Volume(Spatial):
 		self.width = width
 		self.depth = depth
 
+	@property
+	def H(self):
+		return self.height
+
+	@property
+	def W(self):
+		return self.width
+
+	@property
+	def D(self):
+		return self.depth
 
 	def __str__(self):
-		return f'Volume(C={self.channels}, H={self.height}, W={self.width}, D={self.depth})'
+		return f'{self.__class__.__name__}(C={self.channels}, H={self.height}, W={self.width}, D={self.depth})'
 
 
 
@@ -480,7 +535,7 @@ class Categorical(Dim):
 
 
 	def __str__(self):
-		return f'Categorical({self.n})'
+		return f'{self.__class__.__name__}({self.n})'
 
 
 	def standardize(self, vals):
@@ -517,11 +572,16 @@ class Categorical(Dim):
 
 
 	def compress(self, vals):
-		return vals.argmax(-1)
+		return vals.max(-1)[1]
 
 
-	def difference(self, x, y, standardize=False):
-		return x.sub(y).bool().long()
+	def difference(self, x, y, standardize=None):
+		return (x - y).bool().float()
+
+
+	def distance(self, x, y, standardize=None):
+		N = len(x) if len(x.shape) > 1 else 1
+		return self.difference(x, y).view(N, -1).sum(-1).bool().float()
 
 
 
@@ -535,12 +595,12 @@ class Binary(Categorical):
 
 
 
-class JointSpace(Dim):
-	def __init__(self, *dims, names=None, shape=None, max=None, min=None, **kwargs):
+class Joint(Dim):
+	def __init__(self, *dims, names=None, shape=None, max=None, min=None, scales=None, **kwargs):
 		singles = []
 		dim_names = []
 		for i, d in enumerate(dims):
-			if isinstance(d, JointSpace):
+			if isinstance(d, Joint):
 				singles.extend(d.dims)
 				if d.names is not None:
 					dim_names.extend(d.names)
@@ -558,6 +618,7 @@ class JointSpace(Dim):
 		self.names = dim_names
 		self.dims = dims
 		self._expanded_shape = expanded_shape
+		self.scales = scales
 		self._dim_indices = np.cumsum([0] + [len(dim) for dim in self.dims]).tolist()
 		self._dim_expanded_indices = np.cumsum([0] + [dim.expanded_len() for dim in self.dims]).tolist()
 		self._is_dense = any(1 for dim in dims if isinstance(dim, Continuous))
@@ -565,7 +626,7 @@ class JointSpace(Dim):
 
 	def __str__(self):
 		contents = ', '.join(str(x) for x in self.dims)
-		return f'Joint({contents})'
+		return f'{self.__class__.__name__}({contents})'
 
 
 	def __iter__(self):
@@ -626,7 +687,24 @@ class JointSpace(Dim):
 		return self._dispatch('sample', N=N, gen=gen, seed=seed)
 
 
-	def difference(self, x, y, standardize=False):
+	def distance(self, x, y, standardize=None, scale=None):
+		if standardize is None and self.scales is not None: # specifying scales override intrinsic scales
+			standardize = True
+		mags = self.measure(x, y, standardize=standardize)
+		if scale is None:
+			scale = self.scales or torch.ones(mags.shape[-1]).to(mags)
+		return (mags @ scale.view(-1, 1)).squeeze(-1)
+
+		diffs = self.difference(x, y, standardize=standardize)
+		if self.scales is None:
+			return diffs.sum(-1)
+
+
+	def measure(self, x, y, standardize=None):
+		return self._dispatch('measure', x, y, standardize=standardize)
+
+
+	def difference(self, x, y, standardize=None):
 		return self._dispatch('difference', x, y, standardize=standardize)
 
 

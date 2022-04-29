@@ -1,1 +1,1 @@
-from .task import MetricTask
+from .task import MetricTask, CosSimMetricTask, CorrelationMetricTask
