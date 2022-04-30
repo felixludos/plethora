@@ -1,22 +1,23 @@
-
+from omnibelt import agnosticmethod
 from omnibelt import Exportable as _Old_Exportable, export, load_export
-from omnibelt import exporting_common as _common
+# from omnibelt import exporting_common as _common
 
 from .features import Rooted
 
 
+
 class Exportable(_Old_Exportable, Rooted, create_table=True):
-	@classmethod
-	def create_export_path(cls, name, root=None, ext=None):
+	@agnosticmethod
+	def create_export_path(self, name, root=None, ext=None):
 		if root is None:
-			root = cls.get_root()
+			root = self.get_root()
 		return super().create_export_path(name, root=root, ext=ext)
 	
 	
-	@classmethod
-	def create_load_path(cls, name, root=None):
+	@agnosticmethod
+	def create_load_path(self, name, root=None):
 		if root is None:
-			root = cls.get_root()
+			root = self.get_root()
 		return super().create_load_path(name, root=root)
 
 

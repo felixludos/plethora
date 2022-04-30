@@ -1,9 +1,9 @@
 import inspect
 
 import logging
-from omnibelt import get_printer, unspecified_argument, agnosticmethod, classdescriptor, ClassDescriptable
+from omnibelt import unspecified_argument, agnosticmethod, classdescriptor, ClassDescriptable
 
-from .util import spaces
+from . import spaces
 
 # prt = get_printer(__file__, format='%(levelname)s: %(msg)s')
 

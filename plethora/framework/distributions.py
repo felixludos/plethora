@@ -6,7 +6,8 @@ from torch.distributions.utils import lazy_property
 from torch.distributions import constraints
 
 from .util.tensors import SpaceTensor, WrappedTensor
-from .features import Seeded, Device
+from .features import Device
+from .random import Seeded
 from .models import Generator
 
 

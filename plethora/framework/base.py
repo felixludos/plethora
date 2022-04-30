@@ -3,7 +3,8 @@ from collections import OrderedDict
 import torch
 from omnibelt import unspecified_argument, duplicate_instance
 
-from .features import Device, DeviceContainer, Prepared, Seeded
+from .random import Seeded
+from .features import Device, DeviceContainer, Prepared, Fingerprinted
 
 
 
@@ -13,7 +14,7 @@ class BufferTransform:
 
 
 
-class AbstractData(Prepared): # application of Prepared
+class AbstractData(Prepared, Fingerprinted): # application of Prepared
 	'''Includes mostly buffers and datasets, as well as batches and views (all of which uses prepare() and get())'''
 
 	def copy(self):
@@ -29,6 +30,10 @@ class AbstractData(Prepared): # application of Prepared
 		if not self.is_ready:
 			raise self.NotReady
 		return self._update(sel=sel, **kwargs)
+
+
+	def _fingerprint_data(self):
+		return {'ready': self.is_ready, **super()._fingerprint_data()}
 
 
 	def get(self, sel=None, **kwargs):
@@ -76,6 +81,11 @@ class AbstractView(AbstractData):
 		super().__init__(**kwargs)
 		self.source = source
 		self.sel = sel
+
+
+	def _fingerprint_data(self):
+		return {'source': self.fingerprint_obj(self.source), 'sel': self.fingerprint_obj(self.sel),
+		        **super()._fingerprint_data()}
 
 
 	View = None
@@ -181,6 +191,10 @@ class AbstractBuffer(BufferTransform, StorableUpdate, AbstractData):
 	def __init__(self, space=None, **kwargs):
 		super().__init__(**kwargs)
 		self.space = space
+
+
+	def _fingerprint_data(self):
+		return {'space': self.fingerprint_obj(self.space), **super()._fingerprint_data()}
 
 
 	@property

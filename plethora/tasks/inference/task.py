@@ -1,9 +1,8 @@
-from omnibelt import get_printer, unspecified_argument, agnosticmethod
+from omnibelt import get_printer, agnosticmethod
 
-from ...framework.util import spaces
 from ...framework import models, hparam, inherit_hparams
-from ..base import Task, BatchedTask, SimpleEvaluationTask
-from ...datasets.base import EncodableDataset, BufferView, SupervisedDataset, DataSource
+from ..base import Task
+from ...datasets.base import EncodableDataset, DataSource
 
 from .estimators import GradientBoostingWrapperBuilder
 

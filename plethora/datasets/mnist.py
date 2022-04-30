@@ -4,11 +4,8 @@ import torch
 from torch.nn import functional as F
 import torchvision
 
-from .base import Dataset, SupervisedDataset, Buffer, ImageDataset
-from ..framework.base import AbstractBuffer
-from ..framework.util import spaces
-from ..framework import Rooted
-
+from .base import SupervisedDataset, Buffer, ImageDataset
+from ..framework import spaces
 
 
 class ImageBuffer(Buffer):

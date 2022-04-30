@@ -2,10 +2,10 @@ import numpy as np
 from torch import nn
 from omnibelt import unspecified_argument, agnosticmethod
 
-from ..util import spaces
+from .. import spaces
 from ..base import Function
-from ..hyperparameters import hparam, inherit_hparams
-from ..models import Model, ModelBuilder
+from ..hyperparameters import hparam
+from ..models import Model
 
 
 class Reshaper(nn.Module): # by default flattens

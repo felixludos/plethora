@@ -1,12 +1,12 @@
-import sys, os, shutil
-from omnibelt import unspecified_argument, agnosticmethod
+import os
+from omnibelt import agnosticmethod
 import numpy as np
 import torch
 import subprocess
 import wget
 import h5py as hf
 
-from ..framework.util import spaces
+from ..framework import spaces
 from .base import ImageDataset, SyntheticDataset
 from .buffers import TransformedBuffer
 from .mnist import ImageBuffer

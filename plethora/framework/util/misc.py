@@ -1,12 +1,12 @@
-import numpy as np
-import torch
+import numpy as _np
+import torch as _torch
 
 
 def deviced_fn(fn, device='cuda', out_device='cpu'):
 	def _process_arg(t, d=device):
-		if isinstance(t, np.ndarray):
-			t = torch.as_tensor(t)
-		if d is not None and isinstance(t, torch.Tensor):
+		if isinstance(t, _np.ndarray):
+			t = _torch.as_tensor(t)
+		if d is not None and isinstance(t, _torch.Tensor):
 			t = t.to(d)
 		return t
 	def _wrapped(*args, **kwargs):

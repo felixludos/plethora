@@ -2,8 +2,8 @@ import numpy as np
 # from sklearn.datasets import make_swiss_roll
 import torch
 
-from .base import Dataset, SyntheticDataset
-from ..framework.util import spaces
+from .base import SyntheticDataset
+from ..framework import spaces
 
 
 class SwissRollDataset(SyntheticDataset):

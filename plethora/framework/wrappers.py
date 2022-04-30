@@ -1,5 +1,7 @@
 import torch as _torch
 from .features import Device as _Device
+
+# TODO: separate with defaults
 from .models import Extractor as _Extractor, \
 	Encoder as _Encoder, \
 	Decoder as _Decoder, \

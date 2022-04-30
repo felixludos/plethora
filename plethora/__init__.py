@@ -3,7 +3,7 @@ __version__ = "0.1"
 
 from . import tasks
 from . import community
-from .framework import util
+from .framework import util, spaces
 from .datasets import toy, mnist
 
 
@@ -14,10 +14,10 @@ import omnifig as fig
 import torch
 from tqdm import tqdm
 
-from omnilearn import models, util as outil
+from omnilearn import models  # as outil
+from plethora.framework import util as putil
 from .datasets import MNIST
 from .framework import Criterion
-from .framework.util import spaces
 from .framework.extractors import Timm_Extractor
 from . import tasks
 from .framework import wrapped
@@ -29,6 +29,10 @@ from plethora.community import download_bits_back
 
 @fig.Script('test')
 def _test_script(A):
+	dataset = datasets.Shapes3D(download=False, mode='train')
+	print(dataset.fingerprint())
+	print()
+
 	# download_bits_back()
 	# return
 

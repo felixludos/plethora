@@ -1,30 +1,7 @@
 # import random
 import numpy as np
-import torch
 from omnibelt import agnosticmethod
-
-
-
-def set_seed(seed=None):
-	if seed is None:
-		seed = gen_random_seed()
-	# random.seed(seed)
-	# np.random.seed(seed)
-	torch.manual_seed(seed)
-	if torch.cuda.is_available():
-		torch.cuda.manual_seed(seed)
-	return seed
-
-
-
-def gen_random_seed(gen=None):
-	return torch.randint(-2**63, 2**63-1, size=(), generator=gen).item()
-
-
-
-def gen_deterministic_seed(seed):
-	return gen_random_seed(torch.Generator().manual_seed(seed))
-
+from plethora.framework import abstract
 
 
 def angle_diff(angle1, angle2, period=2*np.pi):
@@ -57,7 +34,7 @@ def mixing_score(mat, dim1=1, dim2=2, eps=1e-10):
 
 
 
-class Metric:
+class Metric(abstract.Metric):
 	@staticmethod
 	def difference(x, y): # should find an z such that z + y = x
 		return x - y

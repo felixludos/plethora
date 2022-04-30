@@ -1,6 +1,5 @@
-
-from ..util import spaces
-from ..models import Model, ModelBuilder
+from .. import spaces
+from ..models import ModelBuilder
 from .estimators import JointEstimator, ScikitEstimatorWrapper, Regressor, Classifier, Periodized
 
 

@@ -56,6 +56,15 @@ class AbstractCountableData(base.AbstractData):
 		return self.size()
 
 
+	def _fingerprint_data(self):
+		try:
+			N = len(self)
+		except self.UnknownCount:
+			N = None
+		return {'len': N, **super()._fingerprint_data()}
+
+
+
 class AbstractCountableDataView(AbstractCountableData, base.AbstractView):
 	def __init__(self, **kwargs):
 		super().__init__(**kwargs)

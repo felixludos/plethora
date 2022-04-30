@@ -6,7 +6,7 @@ import timm
 
 # from ..framework import util
 from ..framework import Extractor, Rooted, Device
-from ..framework.util import spaces
+from . import spaces
 
 
 # class Extractor(nn.Module):

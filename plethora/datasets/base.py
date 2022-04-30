@@ -7,7 +7,7 @@ import torch
 from omnibelt import unspecified_argument, duplicate_instance, md5, agnosticmethod
 import h5py as hf
 
-from ..framework.features import Prepared
+from ..framework.features import Prepared, Fingerprinted
 from ..framework import base, Rooted, Named, util#, Device
 from .buffers import AbstractFixedBuffer, Buffer, BufferView, HDFBuffer, \
 	AbstractCountableData, AbstractCountableDataView
@@ -51,7 +51,7 @@ class Batchable(base.AbstractData):
 	
 
 
-class Epoched(AbstractCountableData, Batchable, base.Seeded): # TODO: check Seeded and Device integration
+class Epoched(AbstractCountableData, Batchable, util.Seeded): # TODO: check Seeded and Device integration
 	'''Batchable with a fixed total number of samples (implements __len__)'''
 	def __init__(self, batch_size=64, shuffle_batches=True, force_batch_size=True,
 	             # batch_device=None,
@@ -204,6 +204,11 @@ class DataSource(Batchable, base.AbstractData, Named):
 		return self.has_buffer(item)
 
 
+	def _fingerprint_data(self):
+		return {'buffers': {name:buffer.fingerprint() for name, buffer in self.iter_buffers()}, 'ready': self.is_ready,
+		        **super()._fingerprint_data()}
+
+
 	def space_of(self, name):
 		return self.get_buffer(name).space
 
@@ -324,6 +329,10 @@ class MultiModed(DataSource):
 	@property
 	def mode(self):
 		return self._mode
+
+
+	def _fingerprint_data(self):
+		return {'mode': self.mode, **super()._fingerprint_data()}
 
 
 	class MissingModeError(Exception):
@@ -472,6 +481,10 @@ class ReplacementView(BufferTable, SourceView):
 
 
 class CountableView(AbstractCountableDataView, Epoched, SourceView):
+	def _fingerprint_data(self):
+		return {'len': len(self), 'sel': self.sel, **super()._fingerprint_data()}
+
+
 	def get_iterator(self, *, sel=None, **kwargs):
 		sel = self._merge_sel(sel)
 		return super().get_iterator(sel=sel, **kwargs)
@@ -638,9 +651,20 @@ class Dataset(Subsetable, DataCollection):
 	Batch = Batch
 
 
-	# @property
-	# def is_subset(self):
-	# 	return self._subset_src is not None
+	def _fingerprint_data(self):
+		data = super()._fingerprint_data()
+		N = len(self)
+		data['len'] = N
+		if N > 0:
+			sel = torch.randint(N, size=(min(5,N),), generator=self.create_rng(seed=16283393149723337453))
+			for name, buffer in self.iter_buffers(True):
+				if self.is_ready:
+					try:
+						data[name] = self.get(name, sel=sel).view(len(sel), -1).sum(-1).tolist()
+					except:
+						raise # TESTING
+				data[f'{name}-space'] = buffer.space
+		return data
 
 
 	def _size(self):
@@ -695,6 +719,19 @@ class SimpleDataset(Dataset):
 
 
 
+class GenerativeDataset(util.Generator, Dataset):
+	sample_key = None
+
+
+	def _sample(self, shape, gen):
+		N = shape.numel()
+		batch = self.get_batch(shuffle=True, num_samples=shape.numel(), batch_size=shape.numel(), gen=gen)
+		if self.sample_key is None:
+			return batch
+		return batch[self.sample_key].view(*shape, *self.space_of(self.sample_key).shape)
+
+
+
 class _ObservationInfo(DataSource):
 	@property
 	def din(self):
@@ -711,20 +748,14 @@ class _ObservationInfo(DataSource):
 
 
 
-class ObservationDataset(_ObservationInfo, Dataset):
+class ObservationDataset(_ObservationInfo, GenerativeDataset):
+	sample_key = 'observation'
+
+
 	class Batch(_ObservationInfo, Dataset.Batch):
 		pass
 	class View(_ObservationInfo, Dataset.View):
 		pass
-
-
-	# def _prepare(self, *args, **kwargs):
-	# 	super()._prepare()
-	# 	if not self.has_buffer('observation'):
-	# 		# TODO: warning: guessing observation buffer
-	# 		assert len(self.buffers), 'cant find a buffer for the observations (did you forget to register it?)'
-	# 		key = list(self.buffers.keys())[-1]
-	# 		self.register_buffer('observation', self.get_buffer(key))
 
 
 
@@ -763,14 +794,6 @@ class SupervisedDataset(_SupervisionInfo, ObservationDataset):
 		pass
 
 
-	# def _prepare(self, *args, **kwargs):
-	# 	super()._prepare()
-	# 	if not self.has_buffer('target'):
-	# 		# TODO: warning: guessing target buffer
-	# 		key = list(self.buffers.keys())[0 if len(self.buffers) < 2 else -2]
-	# 		self.register_buffer('target', self.get_buffer(key))
-
-
 
 class _LabeledInfo(_SupervisionInfo):
 	@property
@@ -793,16 +816,6 @@ class LabeledDataset(_LabeledInfo, SupervisedDataset):
 		pass
 	class View(_LabeledInfo, SupervisedDataset.View):
 		pass
-
-
-	# def _prepare(self, *args, **kwargs):
-	# 	if not self.has_buffer('target') and self.has_buffer('label'):
-	# 		self.register_buffer('target', self.get_buffer('label'))
-	# 	super()._prepare(*args, **kwargs)
-		# if not self.has_buffer('label'):
-		# 	# TODO: warning: guessing target buffer
-		# 	key = list(self.buffers.keys())[0 if len(self.buffers) < 3 else -3]
-		# 	self.register_buffer('label', self.get_buffer(key))
 
 
 	def generate_label(self, N, seed=None, gen=None):
