@@ -76,7 +76,6 @@ class DeviceContainer(Device):
 
 
 
-
 class Fingerprinted:
 	def fingerprint(self):
 		return md5(self._fingerprint_data())
@@ -160,7 +159,9 @@ class Prepared: # TODO: add autoprepare using __certify__
 		raise NotImplementedError
 
 
+
 DEFAULT_ROOT = os.getenv('PLETHORA_PATH', 'local_data/')
+
 
 
 class Rooted:

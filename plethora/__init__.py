@@ -17,7 +17,7 @@ from tqdm import tqdm
 from omnilearn import models  # as outil
 from plethora.framework import util as putil
 from .datasets import MNIST
-from .framework import Criterion
+from .framework import Criterion, using_rng
 from .framework.extractors import Timm_Extractor
 from . import tasks
 from .framework import wrapped
@@ -29,9 +29,13 @@ from plethora.community import download_bits_back
 
 @fig.Script('test')
 def _test_script(A):
-	dataset = datasets.Shapes3D(download=False, mode='train')
-	print(dataset.fingerprint())
-	print()
+	# dataset = datasets.Shapes3D(download=False, mode='train').prepare()
+	# print(dataset.fingerprint())
+	# with using_rng(10):
+	# 	print(dataset.fingerprint())
+	# with using_rng(100):
+	# 	print(dataset.fingerprint())
+	# print()
 
 	# download_bits_back()
 	# return

@@ -3,6 +3,7 @@
 import torch
 from omnibelt import agnosticmethod, unspecified_argument#, mix_into
 from . import util
+from . import abstract
 from .features import Seeded
 from .hyperparameters import Parametrized, ModuleParametrized, hparam, inherit_hparams
 from .base import Function, Container
@@ -303,7 +304,7 @@ class Decoder(Function):
 
 
 
-class Generator(Function):
+class Generator(Function, abstract.Generator): # TODO update
 	@agnosticmethod
 	def generate(self, N: int, gen=None):
 		raise NotImplementedError
@@ -324,7 +325,7 @@ class Criterion(Function):
 
 
 
-class Metric(Criterion, util.Metric): # obeys triangle inequality
+class Metric(Criterion, abstract.Metric): # obeys triangle inequality
 	@agnosticmethod
 	def compare(self, observation1, observation2):
 		return self.distance(observation1, observation2)

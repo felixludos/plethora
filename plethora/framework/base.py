@@ -215,7 +215,7 @@ class Function(Device):
 			self.din = din
 		if dout is not unspecified_argument:
 			self.dout = dout
-		self.din, self.dout = din, dout
+		# self.din, self.dout = din, dout
 
 	
 	def get_dims(self):

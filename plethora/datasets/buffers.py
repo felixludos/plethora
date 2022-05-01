@@ -92,10 +92,10 @@ class AbstractFixedBuffer(AbstractCountableData, base.AbstractBuffer): # fixed n
 	def size(self):
 		try:
 			return super().size()
-		except self.UnknownCountError:
+		except self.UnknownCount:
 			if self._waiting_update is not None:
 				return len(self._waiting_update)
-			raise self.UnknownCountError()
+			raise self.UnknownCount()
 
 
 	def _store_update(self, sel=None, **kwargs):
@@ -138,12 +138,20 @@ class AbstractFixedBuffer(AbstractCountableData, base.AbstractBuffer): # fixed n
 
 
 class Buffer(AbstractFixedBuffer, DeviceContainer):
-	def __init__(self, data=None, space=None, **kwargs):
+	def __init__(self, data=None, **kwargs):
 		super().__init__(**kwargs)
 		self._register_deviced_children(_data=None)
 		self.data = data
-		self.space = space
 
+
+	def _fingerprint_data(self):
+		data = super()._fingerprint_data()
+		if self.is_ready:
+			N = len(self)
+			sel = torch.randint(N, size=(min(5, N),), generator=torch.Generator().manual_seed(16283393149723337453))
+			data['data'] = self.get(sel).reshape(len(sel), -1).mean(-1).tolist()
+		return data
+	
 
 	def _title(self):
 		return f'{self.__class__.__name__}'
@@ -155,14 +163,6 @@ class Buffer(AbstractFixedBuffer, DeviceContainer):
 	@data.setter
 	def data(self, data):
 		self._data = data
-
-
-	@property
-	def space(self):
-		return self._space
-	@space.setter
-	def space(self, space):
-		self._space = space
 
 
 	@property
@@ -213,7 +213,7 @@ class RemoteBuffer(Buffer):
 		self.data = self.get(**kwargs)
 
 
-	def size(self):
+	def _size(self):
 		if self.data is not None:
 			return super(RemoteBuffer, self)._size()
 		return super()._size()
@@ -347,7 +347,6 @@ class NarrowBuffer(Narrow, Buffer):
 
 class NarrowBufferView(Narrow, BufferView):
 	pass
-
 
 
 

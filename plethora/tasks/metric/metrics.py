@@ -2,10 +2,10 @@ import torch
 from torch.nn import functional as F
 from omnibelt import agnosticmethod
 
-from ...framework import hparam, inherit_hparams, ModuleParametrized, models, util
+from ...framework import hparam, inherit_hparams, ModuleParametrized, models, util, abstract, math
 
 
-class Lp(util.Lp, models.Metric, ModuleParametrized):
+class Lp(math.Lp, abstract.Metric, ModuleParametrized):
 	p = hparam()
 
 # class L0(util.L0, Lp): pass
@@ -16,10 +16,10 @@ class Lp(util.Lp, models.Metric, ModuleParametrized):
 
 
 metric_table = {
-	'l0': util.L0,
-	'l1': util.L1,
-	'l2': util.L2,
-	'linf': util.Linf,
+	'l0': math.L0,
+	'l1': math.L1,
+	'l2': math.L2,
+	'linf': math.Linf,
 }
 def get_metric(ident):
 	if isinstance(ident, (int,float)):

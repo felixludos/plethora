@@ -8,7 +8,7 @@ from omnibelt import unspecified_argument, duplicate_instance, md5, agnosticmeth
 import h5py as hf
 
 from ..framework.features import Prepared, Fingerprinted
-from ..framework import base, Rooted, Named, util#, Device
+from ..framework import base, Rooted, Named, util, Seeded, Generator, Metric
 from .buffers import AbstractFixedBuffer, Buffer, BufferView, HDFBuffer, \
 	AbstractCountableData, AbstractCountableDataView
 
@@ -51,7 +51,7 @@ class Batchable(base.AbstractData):
 	
 
 
-class Epoched(AbstractCountableData, Batchable, util.Seeded): # TODO: check Seeded and Device integration
+class Epoched(AbstractCountableData, Batchable, Seeded): # TODO: check Seeded and Device integration
 	'''Batchable with a fixed total number of samples (implements __len__)'''
 	def __init__(self, batch_size=64, shuffle_batches=True, force_batch_size=True,
 	             # batch_device=None,
@@ -202,11 +202,6 @@ class DataSource(Batchable, base.AbstractData, Named):
 
 	def __contains__(self, item):
 		return self.has_buffer(item)
-
-
-	def _fingerprint_data(self):
-		return {'buffers': {name:buffer.fingerprint() for name, buffer in self.iter_buffers()}, 'ready': self.is_ready,
-		        **super()._fingerprint_data()}
 
 
 	def space_of(self, name):
@@ -379,6 +374,17 @@ class BufferTable(DataSource):
 		return name in self.buffers
 
 
+	def _fingerprint_data(self):
+		data = super()._fingerprint_data()
+		if self.is_ready:
+			data['buffers'] = {}
+			for name, buffer in self.iter_buffers():
+				data['buffers'][name] = buffer.fingerprint()
+		return data
+		return {'buffers': {name:buffer.fingerprint() for name, buffer in self.iter_buffers()}, 'ready': self.is_ready,
+		        **super()._fingerprint_data()}
+
+
 	def copy(self):
 		new = super().copy()
 		new.buffers = new.buffers.copy()
@@ -414,7 +420,7 @@ class BufferTable(DataSource):
 		if space is not unspecified_argument:
 			buffer.space = space
 		if not isinstance(buffer, str) and not self._check_buffer(name, buffer):
-			raise InvalidBuffer(name, buffer)
+			raise self.InvalidBuffer(name, buffer)
 		self.buffers[name] = buffer
 		return self.buffers[name]
 
@@ -467,8 +473,8 @@ class ReplacementView(BufferTable, SourceView):
 
 
 	def _update(self, sel=None, **kwargs):
-		if name in self.buffers:
-			return super(SourceView, self)._update(name, sel=sel, **kwargs)
+		# if name in self.buffers:
+		# 	return super(SourceView, self)._update(name, sel=sel, **kwargs)
 		if self.source is None:
 			raise self.NoSource
 		sel = self._merge_sel(sel)
@@ -481,10 +487,6 @@ class ReplacementView(BufferTable, SourceView):
 
 
 class CountableView(AbstractCountableDataView, Epoched, SourceView):
-	def _fingerprint_data(self):
-		return {'len': len(self), 'sel': self.sel, **super()._fingerprint_data()}
-
-
 	def get_iterator(self, *, sel=None, **kwargs):
 		sel = self._merge_sel(sel)
 		return super().get_iterator(sel=sel, **kwargs)
@@ -510,7 +512,7 @@ class CachedView(SourceView, base.Container):
 
 
 	def __len__(self):
-		return super(AbstractCountableData, self).__len__(item)
+		return super(AbstractCountableData, self).__len__()
 
 
 	def update(self, other): # TODO: maybe add a warning that dict.update is used
@@ -651,20 +653,20 @@ class Dataset(Subsetable, DataCollection):
 	Batch = Batch
 
 
-	def _fingerprint_data(self):
-		data = super()._fingerprint_data()
-		N = len(self)
-		data['len'] = N
-		if N > 0:
-			sel = torch.randint(N, size=(min(5,N),), generator=self.create_rng(seed=16283393149723337453))
-			for name, buffer in self.iter_buffers(True):
-				if self.is_ready:
-					try:
-						data[name] = self.get(name, sel=sel).view(len(sel), -1).sum(-1).tolist()
-					except:
-						raise # TESTING
-				data[f'{name}-space'] = buffer.space
-		return data
+	# def _fingerprint_data(self):
+	# 	data = super()._fingerprint_data()
+	# 	N = len(self)
+	# 	data['len'] = N
+	# 	if N > 0:
+	# 		sel = torch.randint(N, size=(min(5,N),), generator=self.create_rng(seed=16283393149723337453))
+	# 		for name, buffer in self.iter_buffers(True):
+	# 			if self.is_ready:
+	# 				try:
+	# 					data[name] = self.get(name, sel=sel).view(len(sel), -1).sum(-1).tolist()
+	# 				except:
+	# 					raise # TESTING
+	# 			data[f'{name}-space'] = buffer.space
+	# 	return data
 
 
 	def _size(self):
@@ -719,13 +721,13 @@ class SimpleDataset(Dataset):
 
 
 
-class GenerativeDataset(util.Generator, Dataset):
+class GenerativeDataset(Dataset, Generator):
 	sample_key = None
 
 
 	def _sample(self, shape, gen):
 		N = shape.numel()
-		batch = self.get_batch(shuffle=True, num_samples=shape.numel(), batch_size=shape.numel(), gen=gen)
+		batch = self.get_batch(shuffle=True, num_samples=N, batch_size=N, gen=gen)
 		if self.sample_key is None:
 			return batch
 		return batch[self.sample_key].view(*shape, *self.space_of(self.sample_key).shape)
@@ -759,7 +761,7 @@ class ObservationDataset(_ObservationInfo, GenerativeDataset):
 
 
 
-class _SupervisionInfo(util.Metric, _ObservationInfo):
+class _SupervisionInfo(_ObservationInfo, Metric):
 	@property
 	def dout(self):
 		return self.target_space

@@ -5,7 +5,7 @@ from omnibelt import get_printer, agnosticmethod
 from scipy import stats
 
 from ...datasets import base as dataset_base
-from ...framework import util, hparam, inherit_hparams, models, util
+from ...framework import util, hparam, inherit_hparams, models, util, abstract
 from ..base import Task, BatchedTask, Cumulative, SimpleEvaluationTask
 
 from .metrics import get_metric
@@ -56,7 +56,7 @@ class MetricTask(AbstractMetricTask):
 	true_distance_key = 'true_distance'
 
 	encoder = hparam(default=None, module=models.Encoder)
-	metric = hparam(module=util.Metric)
+	metric = hparam(module=abstract.Metric)
 	criterion = hparam(module=models.Criterion)
 	dataset = hparam(module=dataset_base.SupervisedDataset) # need some supervision for true distances
 	use_pairwise = hparam(True) # compare all pairs in batch, otherwise just compares half of the batch

@@ -4,7 +4,7 @@ from omnibelt import Packable
 
 import numpy as np
 import torch
-# from torch.nn import functional as F
+from torch.nn import functional as F
 
 from .math import angle_diff, Metric, Lp, L2, L1
 from .random import Generator
@@ -15,7 +15,7 @@ from .features import Fingerprinted
 # TODO: include dtypes
 
 
-class Dim(Packable, Metric, Generator):
+class Dim(Packable, Metric, Generator, Fingerprinted):
 	def __init__(self, min=None, max=None, shape=(), dtype=None, **kwargs):
 		super().__init__(**kwargs)
 		self.shape = shape
@@ -78,10 +78,15 @@ class Dim(Packable, Metric, Generator):
 		return self.shape.numel()
 
 
-	# @property
-	# def expanded_len(self):
-	# 	return self.expanded_shape.numel()
-
+	def _fingerprint_data(self):
+		return {
+			'min': None if self.min is None else self.min.float().mean().item(),
+			'max': None if self.max is None else self.max.float().mean().item(),
+			'dtype': str(self.dtype),
+			'shape': str(self.shape),
+			**super()._fingerprint_data()
+		}
+	
 
 	def sample(self, *shape, gen=None):
 		samples = super().sample(*shape, gen=gen)
@@ -340,6 +345,14 @@ class MultiDim(Dim):
 		self.channels = channels
 
 
+	def _fingerprint_data(self):
+		return {
+			'dim': str(self.dim),
+			'channels': str(self.channels),
+			**super()._fingerprint_data()
+		}
+	
+
 	def __len__(self):
 		return self.channels
 
@@ -534,6 +547,10 @@ class Categorical(Dim):
 		return f'{self.__class__.__name__}({self.n})'
 
 
+	def _fingerprint_data(self):
+		return {'n': str(self.n), **super()._fingerprint_data()}
+	
+
 	def standardize(self, vals):
 		return vals / (self.n - 1)
 
@@ -629,6 +646,10 @@ class Joint(Dim):
 	def __iter__(self):
 		return iter(self.dims)
 
+
+	def _fingerprint_data(self):
+		return {'dims': [self.fingerprint_obj(dim) for dim in self.dims], **super()._fingerprint_data()}
+	
 
 	@property
 	def expanded_shape(self):
