@@ -1,6 +1,8 @@
 import os
 from collections import OrderedDict
 from pathlib import Path
+
+import numpy as np
 import torch
 from omnibelt import unspecified_argument, agnosticmethod, md5, primitive
 
@@ -93,6 +95,11 @@ class Fingerprinted:
 			return str(obj)
 		if isinstance(obj, primitive):
 			return obj
+		if isinstance(obj, (np.ndarray, torch.Tensor)):
+			numels = np.product(obj.shape).item()
+			sel = torch.randint(numels, size=(min(5, numels),),
+			        generator=torch.Generator().manual_seed(16283393149723337453)).tolist()
+			return [obj.sum().item(), obj.reshape(-1)[sel].tolist()]
 		if isinstance(obj, (list, tuple)):
 			return [cls.fingerprint_obj(o) for o in obj]
 		if isinstance(obj, dict):

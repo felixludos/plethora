@@ -206,7 +206,7 @@ class AbstractBuffer(BufferTransform, StorableUpdate, AbstractData):
 
 
 
-class Function(Device):
+class Function(Fingerprinted):
 	din, dout = None, None
 
 	def __init__(self, *args, din=unspecified_argument, dout=unspecified_argument, **kwargs):
@@ -220,6 +220,25 @@ class Function(Device):
 	
 	def get_dims(self):
 		return self.din, self.dout
+
+
+	def _fingerprint_data(self):
+		data = super()._fingerprint_data()
+		data['din'] = self.fingerprint_obj(self.din)
+		data['dout'] = self.fingerprint_obj(self.dout)
+		if self.din is not None:
+			x = self.din.sample(4, generator=torch.Generator().manual_seed(16283393149723337453))
+			try:
+				with torch.no_grad():
+					y = self(x)
+				data['output'] = self.fingerprint_obj(y)
+			except:
+				raise # TESTING
+		return data
+
+
+	def __call__(self, *args, **kwargs):
+		raise NotImplementedError
 	
 
 

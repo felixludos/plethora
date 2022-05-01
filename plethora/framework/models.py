@@ -283,56 +283,71 @@ class TrainableModel(Model):
 
 
 
-class Extractor(Function):
+class Extractor(Function, abstract.Extractor):
 	@agnosticmethod
 	def extract(self, observation):
-		raise NotImplementedError
+		return self(observation)
 
 
 
-class Encoder(Extractor):
+class Encoder(Extractor, abstract.Encoder):
 	@agnosticmethod
 	def encode(self, observation):
-		raise NotImplementedError
+		return self(observation)
 
 
 
-class Decoder(Function):
+class Decoder(Function, abstract.Decoder):
 	@agnosticmethod
 	def decode(self, latent):
-		raise NotImplementedError
+		return self(latent)
 
 
 
 class Generator(Function, abstract.Generator): # TODO update
 	@agnosticmethod
-	def generate(self, N: int, gen=None):
+	def sample(self, *shape, gen=None):
 		raise NotImplementedError
 
 
 
-class Discriminator(Function):
+class Discriminator(Function, abstract.Discriminator):
 	@agnosticmethod
 	def judge(self, observation):
-		raise NotImplementedError
+		return self(observation)
 
 
 
-class Criterion(Function):
+class Augmentation(Function, abstract.Augmentation):
+	@agnosticmethod
+	def augment(self, observation):
+		return self(observation)
+
+
+
+class Criterion(Function, abstract.Criterion):
 	@agnosticmethod
 	def compare(self, observation1, observation2):
-		raise NotImplementedError
+		return self(observation1, observation2)
 
 
 
 class Metric(Criterion, abstract.Metric): # obeys triangle inequality
 	@agnosticmethod
-	def compare(self, observation1, observation2):
-		return self.distance(observation1, observation2)
+	def distance(self, observation1, observation2):
+		return self(observation1, observation2)
 
 
 
-class Interpolator(Function): # returns N steps to get from start to finish ("evenly spaces", by default)
+class PathCriterion(Criterion, abstract.PathCriterion):
+	@agnosticmethod
+	def compare_path(self, path1, path2):
+		return self(path1, path2)
+
+
+
+class Interpolator(Function, abstract.Interpolator):
+	# returns N steps to get from start to finish ("evenly spaces", by default)
 	@staticmethod
 	def interpolate(start, end, N):
 		start, end = start.unsqueeze(1), end.unsqueeze(1)
@@ -341,21 +356,17 @@ class Interpolator(Function): # returns N steps to get from start to finish ("ev
 
 
 
-class Estimator(Function):
+class Estimator(Function, abstract.Estimator):
 	@agnosticmethod
 	def predict(self, observation):
-		raise NotImplementedError
+		return self(observation)
 
 
 
-# class Autoencoder(Encoder, Decoder):
-# 	pass
-
-
-class Invertible(Function):
+class Invertible(Function, abstract.Invertible):
 	@agnosticmethod
 	def forward(self, observation):
-		raise NotImplementedError
+		return self(observation)
 
 
 	@agnosticmethod
@@ -364,17 +375,10 @@ class Invertible(Function):
 
 
 
-class Augmentation(Function):
-	@agnosticmethod
-	def augment(self, observation):
-		raise NotImplementedError
-
-
-
-class Compressor(Function):
+class Compressor(Function, abstract.Compressor):
 	@staticmethod
 	def compress(observation):
-		raise NotImplementedError
+		return self(observation)
 
 
 	@staticmethod
@@ -383,21 +387,15 @@ class Compressor(Function):
 
 
 
-class Quantizer(Function):
+class Quantizer(Function, abstract.Quantizer):
 	@staticmethod
 	def quantize(observation): # generally "removes" noise
-		raise NotImplementedError
+		return self(observation)
 
 
 	@staticmethod
 	def dequantize(observation): # generally adds noise
 		raise NotImplementedError
 
-
-
-class PathCriterion(Criterion):
-	@agnosticmethod
-	def compare_path(self, path1, path2):
-		raise NotImplementedError
 
 

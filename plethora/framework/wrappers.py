@@ -2,20 +2,21 @@ import torch as _torch
 from .features import Device as _Device
 
 # TODO: separate with defaults
-from .models import Extractor as _Extractor, \
+from .models import \
+	Extractor as _Extractor, \
 	Encoder as _Encoder, \
 	Decoder as _Decoder, \
 	Generator as _Generator, \
 	Discriminator as _Discriminator, \
+	Augmentation as _Augmentation, \
 	Criterion as _Criterion, \
 	Metric as _Metric, \
+	PathCriterion as _PathCriterion, \
 	Interpolator as _Interpolator, \
 	Estimator as _Estimator, \
-	Augmentation as _Augmentation, \
 	Invertible as _Invertible, \
 	Compressor as _Compressor, \
 	Quantizer as _Quantizer, \
-	PathCriterion as _PathCriterion, \
 	Function as _Function
 
 
