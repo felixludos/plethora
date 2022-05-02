@@ -5,7 +5,7 @@ from omnibelt import get_printer, agnosticmethod
 from scipy import stats
 
 from ...datasets import base as dataset_base
-from ...framework import util, hparam, inherit_hparams, models, util, abstract
+from ...framework import util, hparam, inherit_hparams, models, util, abstract, math
 from ..base import Task, BatchedTask, Cumulative, SimpleEvaluationTask
 
 from .metrics import get_metric
@@ -250,12 +250,12 @@ class CorrelationMetricTask(MetricTask):
 
 	@agnosticmethod
 	def _calc_modularity(self, mat):
-		return util.mixing_score(mat, dim1=0, dim2=1)
+		return math.mixing_score(mat, dim1=0, dim2=1)
 
 
 	@agnosticmethod
 	def _calc_compactness(self, mat):
-		return util.mixing_score(mat, dim1=1, dim2=0)
+		return math.mixing_score(mat, dim1=1, dim2=0)
 
 
 	@agnosticmethod

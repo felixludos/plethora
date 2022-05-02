@@ -10,7 +10,7 @@ import h5py as hf
 from ..framework.features import Prepared, Fingerprinted
 from ..framework import base, Rooted, Named, util, Seeded, Generator, Metric
 from .buffers import AbstractFixedBuffer, Buffer, BufferView, HDFBuffer, \
-	AbstractCountableData, AbstractCountableDataView
+	AbstractCountableData, AbstractCountableDataView, ReplacementBuffer
 
 
 
@@ -443,7 +443,7 @@ class BufferTable(DataSource):
 
 
 
-class ReplacementView(BufferTable, SourceView):
+class ReplacementView(BufferTable, SourceView): # TODO: shouldnt the order be (SourceView, BufferTable) ?
 	def available_buffers(self):
 		buffers = super().available_buffers()
 		for replacement in super(BufferTable, self).available_buffers():
@@ -460,16 +460,27 @@ class ReplacementView(BufferTable, SourceView):
 
 	def _get(self, name, sel=None, **kwargs):
 		if name in self.buffers:
+			sel = self._merge_sel(sel)
 			return super(SourceView, self)._get(name, sel=sel, **kwargs)
 		return super()._get(name, sel=sel, **kwargs)
-		if self.source is None:
-			raise self.NoSource
-		sel = self._merge_sel(sel)
-		return self.source.get(name, sel=sel, **kwargs)
-		# return self.get_buffer(name).get(sel)
-		buffer = self.get_buffer(name)
-		data = buffer.get(sel)
-		return data
+		# if self.source is None:
+		# 	raise self.NoSource
+		# sel = self._merge_sel(sel)
+		# return self.source.get(name, sel=sel, **kwargs)
+		# # return self.get_buffer(name).get(sel)
+		# buffer = self.get_buffer(name)
+		# data = buffer.get(sel)
+		# return data
+
+
+
+	# Buffer = ReplacementBuffer
+	# def register_buffer(self, name, buffer=None, space=unspecified_argument, **kwargs):
+	# 	buffer = super().register_buffer(name=name, buffer=buffer, space=space, **kwargs)
+	# 	# TODO: change or include the source information for replacement buffers
+	# 	buffer.source_table = self.source
+	# 	buffer.source_key = name
+	# 	return buffer
 
 
 	def _update(self, sel=None, **kwargs):
@@ -544,6 +555,12 @@ Batchable.Batch = CachedView
 
 
 class DataCollection(MultiModed, BufferTable, DataSource):
+	def __init__(self, data={}, **kwargs):
+		super().__init__(**kwargs)
+		for key, val in data.items():
+			self.register_buffer(key, val)
+
+
 	def _title(self):
 		mode = self.mode
 		mode = '' if mode is None else f'<{mode}>'
@@ -714,10 +731,8 @@ class Dataset(Subsetable, DataCollection):
 class SimpleDataset(Dataset):
 	_is_ready = True
 
-	def __init__(self, data={}, **kwargs):
-		super().__init__(**kwargs)
-		for key, val in data.items():
-			self.register_buffer(key, val)
+	def __init__(self, **data):
+		super().__init__(data=data)
 
 
 
@@ -725,12 +740,14 @@ class GenerativeDataset(Dataset, Generator):
 	sample_key = None
 
 
-	def _sample(self, shape, gen):
+	def _sample(self, shape, gen, sample_key=unspecified_argument):
+		if sample_key is unspecified_argument:
+			sample_key = self.sample_key
 		N = shape.numel()
 		batch = self.get_batch(shuffle=True, num_samples=N, batch_size=N, gen=gen)
 		if self.sample_key is None:
 			return batch
-		return batch[self.sample_key].view(*shape, *self.space_of(self.sample_key).shape)
+		return batch[sample_key].view(*shape, *self.space_of(sample_key).shape)
 
 
 
@@ -758,6 +775,10 @@ class ObservationDataset(_ObservationInfo, GenerativeDataset):
 		pass
 	class View(_ObservationInfo, Dataset.View):
 		pass
+
+
+	def sample_observation(self, *shape, gen=None):
+		return self.sample(*shape, gen=gen, sample_key='observation')
 
 
 
@@ -796,6 +817,10 @@ class SupervisedDataset(_SupervisionInfo, ObservationDataset):
 		pass
 
 
+	def sample_target(self, *shape, gen=None):
+		return self.sample(*shape, gen=gen, sample_key='target')
+
+
 
 class _LabeledInfo(_SupervisionInfo):
 	@property
@@ -820,15 +845,11 @@ class LabeledDataset(_LabeledInfo, SupervisedDataset):
 		pass
 
 
-	def generate_label(self, N, seed=None, gen=None):
-		if seed is not None:
-			gen = torch.Generator().manual_seed(seed)
-		if gen is None:
-			gen = self.gen
-		return self.label_space.sample(N, seed=seed, gen=gen)
+	def sample_label(self, *shape, gen=None):
+		return self.sample(*shape, gen=gen, sample_key='label')
 
 
-	def generate_observation_from_label(self, label, seed=None, gen=None):
+	def generate_observation_from_label(self, label, gen=None):
 		raise NotImplementedError
 
 
@@ -861,13 +882,14 @@ class _SyntheticInfo(_LabeledInfo):
 
 
 class SyntheticDataset(_SyntheticInfo, LabeledDataset):
-	_standardize_scale = True
+	# _standardize_scale = True
 	_use_mechanisms = True
 
-	def __init__(self, standardize_scale=None, use_mechanisms=None, **kwargs):
+	def __init__(self, use_mechanisms=None, **kwargs):
+	             # standardize_scale=None,
 		super().__init__(**kwargs)
-		if standardize_scale is not None:
-			self._standardize_scale = standardize_scale
+		# if standardize_scale is not None:
+		# 	self._standardize_scale = standardize_scale
 		if use_mechanisms is not None:
 			self._use_mechanisms = use_mechanisms
 		self.register_buffer('mechanism', 'label')
@@ -884,21 +906,16 @@ class SyntheticDataset(_SyntheticInfo, LabeledDataset):
 			return self.source._distince_mechanisms
 
 
-	def generate_mechanism(self, N, seed=None, gen=None): # TODO: link with prior
-		if seed is not None:
-			gen = torch.Generator().manual_seed(seed)
-		if gen is None:
-			gen = self.gen
-		return self.mechanism_space.sample(N, gen=gen)
+	def sample_mechanism(self, *shape, gen=None):
+		return self.sample(*shape, gen=gen, sample_key='mechanism')
 
 
-	def generate_observation_from_label(self, label, seed=None, gen=None):
-		return self.generate_observation_from_mechanism(self.transform_to_mechanisms(label), seed=seed, gen=gen)
+	def generate_observation_from_label(self, label, gen=None):
+		return self.generate_observation_from_mechanism(self.transform_to_mechanisms(label), gen=gen)
 
 
-	def generate_observation_from_mechanism(self, mechanism, seed=None, gen=None):
+	def generate_observation_from_mechanism(self, mechanism, gen=None):
 		raise NotImplementedError
-	# TODO: link with generative model
 # Synthetic means the mapping is known (and available, usually only for evaluation)
 # TODO: separate labels and mechanisms
 

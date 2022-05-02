@@ -219,6 +219,8 @@ class RemoteBuffer(Buffer):
 		return super()._size()
 
 
+	# TODO: shouldn't this override .get(), not just ._get()?
+
 	def _get(self, sel=None, **kwargs):
 		if self.data is None:
 			return super(Buffer, self)._get(sel=sel, **kwargs)
@@ -322,6 +324,22 @@ class BufferView(AbstractCountableDataView, RemoteBuffer):
 
 
 Buffer.View = BufferView
+
+
+
+class ReplacementBuffer(RemoteBuffer):
+	def __init__(self, source=None, key=None, **kwargs):
+		super().__init__(**kwargs)
+		self.source = source
+		self.key = key
+
+
+	def _get(self, sel=None, **kwargs):
+		if self.source is not None and self.key is not None:
+			return self.source.get(self.key, sel=sel, **kwargs)
+		return super()._get(sel=sel, **kwargs)
+
+
 
 
 class Narrow(base.AbstractBuffer):

@@ -1,6 +1,6 @@
 import torch
 from omnibelt import get_printer, unspecified_argument, agnosticmethod
-from ...framework import models, hparam, inherit_hparams
+from ...framework import abstract, hparam, inherit_hparams
 from ..base import Task, BatchedTask, SimpleEvaluationTask, Cumulative
 
 prt = get_printer(__file__)
@@ -10,7 +10,7 @@ prt = get_printer(__file__)
 class AbstractGenerationTask(BatchedTask):
 	generated_key = 'generated'
 	
-	generator = hparam(module=models.Generator)
+	generator = hparam(module=abstract.Generator)
 
 
 	@agnosticmethod
@@ -39,7 +39,7 @@ class AbstractGenerationTask(BatchedTask):
 
 @inherit_hparams('generator')
 class DiscriminatorGenerationTask(SimpleEvaluationTask, AbstractGenerationTask):
-	discriminator = hparam(module=models.Discriminator)
+	discriminator = hparam(module=abstract.Discriminator)
 
 	@agnosticmethod
 	def judge(self, samples):
@@ -64,7 +64,7 @@ class FeatureGenerationTask(AbstractGenerationTask):
 
 
 	feature_criterion = hparam()
-	extractor = hparam(None, module=models.Extractor)
+	extractor = hparam(None, module=abstract.Extractor)
 
 
 	@agnosticmethod

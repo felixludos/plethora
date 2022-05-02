@@ -1,6 +1,6 @@
 from omnibelt import get_printer, agnosticmethod
 
-from ...framework import models, hparam, inherit_hparams
+from ...framework import abstract, hparam, inherit_hparams
 from ..base import Task
 from ...datasets.base import EncodableDataset, DataSource
 
@@ -12,7 +12,7 @@ prt = get_printer(__file__)
 
 class DownstreamTask(Task):
 
-	encoder = hparam(default=None, module=models.Extractor)
+	encoder = hparam(default=None, module=abstract.Extractor)
 
 
 	@hparam(cache=True, module=DataSource)
@@ -69,7 +69,7 @@ class InferenceTask(DownstreamTask):
 		return self.EstimatorBuilder()
 
 
-	@hparam(cache=True)
+	@hparam(cache=True, module=abstract.Estimator)
 	def estimator(self):
 		return self.builder(source=self.train_dataset)
 

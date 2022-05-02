@@ -114,12 +114,12 @@ def create_rng(seed=None, base_gen=None):
 
 
 class Generator(Seeded, abstract.Generator):
-	def sample(self, *shape, gen=None):
+	def sample(self, *shape, gen=None, **kwargs):
 		if gen is None:
 			gen = self.gen
-		return self._sample(torch.Size(shape), gen=gen)
+		return self._sample(torch.Size(shape), gen=gen, **kwargs)
 
 
-	def _sample(self, shape, gen):
+	def _sample(self, shape, gen, **kwargs):
 		raise NotImplementedError
 

@@ -1,7 +1,7 @@
 
 import torch
 from omnibelt import get_printer
-from ...framework import util
+from ...framework import abstract
 from ..base import Task, BatchedTask
 
 from .criterion import PathDiscriminator

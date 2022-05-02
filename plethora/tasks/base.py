@@ -1,10 +1,11 @@
-
+import math as mathlib
 import torch
 
 from omnibelt import get_printer, agnosticmethod, unspecified_argument
 
 # from ..framework.features import Seeded
 from ..framework.base import Container
+from ..datasets.base import Dataset
 from ..framework.models import Computable
 from ..framework import hparam, inherit_hparams
 
@@ -27,6 +28,15 @@ class Task(Computable): # TODO: specify random seed for reproducibility
 				setattr(self, key, remaining[key])
 				del remaining[key]
 		return remaining
+
+
+	def copy(self):
+		new = self.__class__()
+		for key, val in self.__dict__.items():
+			setattr(new, key, val)
+		for key in self.iterate_hparams():
+			setattr(new, key, getattr(self, key))
+		return new
 
 	
 	@agnosticmethod
@@ -228,6 +238,85 @@ class SimpleEvaluationTask(BatchedTask):
 
 
 
+class GeneralizationTask(Task):
+	trial_key = 'trial'
+	baseline_key = 'baseline'
+
+	trial_score_key = 'trial_score'
+	baseline_score_key = 'baseline_score'
+
+	_bound_relative = True
+	_adopt_trial_results = False
+
+	task = hparam(module=Task)
+
+
+	@hparam(module=Task)
+	def baseline_task(self):
+		return self.task
+
+
+	@hparam(cache=True, module=Task)
+	def trial_task(self):
+		return self.modify_task(self.baseline_task)
+
+
+	@agnosticmethod
+	def modify_task(self, task):
+		new = task.copy()
+		new.dataset = self.modify_source(task.dataset)
+		return new
+
+
+	@agnosticmethod
+	def unmodify_task(self, task):
+		new = task.copy()
+		new.dataset = self.unmodify_source(task.dataset)
+		return new
+
+
+	@agnosticmethod
+	def modify_source(self, source):
+		return source
+
+
+	@agnosticmethod
+	def unmodify_source(self, source):
+		raise NotImplementedError
+
+
+	@agnosticmethod
+	def _compute(self, info):
+		info = self._baseline_step(info)
+		info = self._trial_step(info)
+		info = self._compare_step(info)
+		return info
+
+
+	@agnosticmethod
+	def _baseline_step(self, info):
+		info[self.baseline_key] = self.baseline_task.compute(info.source)
+		return info
+
+
+	@agnosticmethod
+	def _trial_step(self, info):
+		info[self.trial_key] = self.trial_task.compute(self.modify_source(info.source))
+		if self._adopt_trial_results:
+			info.update(info[self.trial_key])
+		return info
+
+
+	@agnosticmethod
+	def _compare_step(self, info):
+		info[self.trial_score_key] = info[self.trial_key]['score']
+		info[self.baseline_score_key] = info[self.baseline_key]['score']
+		if self._bound_relative:
+			info[self.trial_score_key] = min(max(0., info[self.trial_score_key]), 1.)
+			info[self.baseline_score_key] = min(max(0., info[self.baseline_score_key]), 1.)
+		# info[self.score_key] = info[self.trial_score_key] / (info[self.baseline_score_key] + self._score_eps)
+		info[self.score_key] = mathlib.sqrt(info[self.trial_score_key] * info[self.baseline_score_key])
+		return info
 
 
 

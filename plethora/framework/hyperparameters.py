@@ -228,6 +228,7 @@ class Parametrized(metaclass=ClassDescriptable):
 				done.add(key)
 				yield (key, val) if items else key
 		for key in self._inherited_hparams:
+			# val = getattr(self, key, unspecified_argument) if getvalue else
 			val = inspect.getattr_static(self, key, unspecified_argument)
 			# val = getattr(self, key, None)
 			if key not in done and isinstance(val, Hyperparameter):

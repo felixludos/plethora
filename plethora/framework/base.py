@@ -146,7 +146,7 @@ class AbstractView(AbstractData):
 		if self.source is None:
 			raise self.NoSource
 		sel = self._merge_sel(sel)
-		return super()._update(sel=sel, **kwargs)
+		return super()._update(sel=sel, **kwargs) # TODO: shouldnt this update source?
 
 
 	def _get(self, sel=None, **kwargs):

@@ -1,5 +1,5 @@
 import torch
-from ...framework import hparam, inherit_hparams, models
+from ...framework import hparam, inherit_hparams, abstract
 from omnibelt import get_printer, agnosticmethod
 from ..base import Task, BatchedTask, SimpleEvaluationTask
 
@@ -15,7 +15,7 @@ class AbstractCompressionTask(SimpleEvaluationTask):
 	bytes_key = 'bytes'
 
 
-	compressor = hparam(module=models.Compressor)
+	compressor = hparam(module=abstract.Compressor)
 
 
 	@agnosticmethod
