@@ -8,7 +8,9 @@ from ..base import Task, GeneralizationTask
 
 
 @inherit_hparams('task', 'baseline_task', 'trial_task')
-class AbstractTransferTask(abstract.Augmentation, GeneralizationTask):
+class AbstractTransferTask(GeneralizationTask, abstract.Augmentation):
+	original_key = 'observation'
+	augmented_key = 'augmented'
 
 	augmentation = hparam(module=abstract.Augmentation)
 
@@ -17,10 +19,9 @@ class AbstractTransferTask(abstract.Augmentation, GeneralizationTask):
 		return self.augmentation.augment(observation)
 
 
-
-@inherit_hparams('augmentation', 'task', 'baseline_task', 'trial_task')
-class EquivarianceTransferTask(AbstractTransferTask): # replace "observation" when loaded
-	buffer_key = 'observation'
+	@agnosticmethod
+	def unmodify_source(self, source):
+		return source.source
 
 
 	@agnosticmethod
@@ -31,15 +32,14 @@ class EquivarianceTransferTask(AbstractTransferTask): # replace "observation" wh
 		if source is None:
 			return source
 		view = source.create_view()
-		replacement = self.AugmentedBuffer(augmentation=augmentation, key=self.buffer_key, source=source, **kwargs)
-		view.register_buffer(self.buffer_key, replacement)
+		replacement = self.AugmentedBuffer(augmentation=augmentation, key=self.original_key, source=source, **kwargs)
+		view.register_buffer(self.augmented_key, replacement)
+		# if self.original_key is not None:
+		# 	view.register_buffer(self.original_key, self.OriginalBuffer(key=self.original_key, source=source))
 		return view
 
 
-	@agnosticmethod
-	def unmodify_source(self, source):
-		return source.source
-
+	# OriginalBuffer = ReplacementBuffer
 
 	class AugmentedBuffer(ReplacementBuffer):
 		def __init__(self, augmentation=None, **kwargs):
@@ -55,58 +55,89 @@ class EquivarianceTransferTask(AbstractTransferTask): # replace "observation" wh
 
 
 
-class AnalogueEquiTransferTask(EquivarianceTransferTask): # for (synthetic) datasets that are analoguous (eg. MPI3D)
-	label_key = 'label'
-
-	analogue_dataset = hparam(module=LabeledDataset)
-
-
-	@agnosticmethod
-	def modify_source(self, source, analogue_source=unspecified_argument, label_key=unspecified_argument, **kwargs):
-		if analogue_source is unspecified_argument:
-			analogue_source = self.analogue_source
-		if label_key is unspecified_argument:
-			label_key = self.label_key
-		return super().modify_source(source, analogue_source=analogue_source, label_key=label_key, **kwargs)
-
-
-	class AugmentedBuffer(ReplacementBuffer):
-		def __init__(self, analogue_source=None, label_key=None, **kwargs):
-			super().__init__(**kwargs)
-			self.analogue_source = analogue_source
-			self.label_key = label_key
-
-
-		def _get(self, sel=None, **kwargs):
-			# if self.analogue_source is not None:
-			label = self.source_table.get(self.label_key, sel=sel, **kwargs)
-			return self.analogue_source.generate_observation_from_label(label)
+@inherit_hparams('augmentation', 'task', 'baseline_task', 'trial_task')
+class EquivarianceTransferTask(AbstractTransferTask): # replace "observation" when loaded
+	def modify_task(self, task):
+		new = super().modify_task(task)
+		new.observation_key = self.augmented_key
+		return new
 
 
 
 @inherit_hparams('augmentation', 'task', 'baseline_task', 'trial_task')
-class InvarianceTransferTask(AbstractTransferTask): # modify operations manually (eg. encode)
-	def __init__(self, **kwargs):
+class AbstractInvarianceTransferTask(AbstractTransferTask): # modify individual operations (eg. encode)
+	_modifications = []
 
-		pass
+	def __init__(self, modifications=None, **kwargs):
+		if modifications is None:
+			modifications = self._modifications
+		super().__init__(**kwargs)
+		self._modifications = set(modifications)
 
 
 	@agnosticmethod
 	def modify_task(self, task):
 		new = super().modify_task(task)
+		for key in self._modifications:
+			setattr(new, key, self)
+		return new
 
 
+
+@inherit_hparams('augmentation', 'task', 'baseline_task', 'trial_task')
+class InvariantEncoderTransferTask(AbstractInvarianceTransferTask, abstract.Encoder):
+	_modifications = ['encoder']
+
+
+	@hparam(module=abstract.Encoder)
+	def encoder(self):
+		return self.trial_task.encoder
+
+
+	def encode(self, observation):
+		augmented = self.trial_task.info[self.augmented_key]
+		return self.encoder.encode(augmented)
+
+
+
+class AnalogueTransferTask(AbstractTransferTask): # for (synthetic) datasets that are analoguous (eg. MPI3D)
+	label_key = 'label'
+
+	analogue_dataset = hparam(module=LabeledDataset) # should not have a train/test split
+
+
+	@agnosticmethod
+	def modify_source(self, source, analogue=unspecified_argument, label_key=unspecified_argument, **kwargs):
+		if analogue is analogue:
+			analogue = self.analogue_dataset
+		if label_key is unspecified_argument:
+			label_key = self.label_key
+		return super().modify_source(source, analogue=analogue, label_key=label_key, **kwargs)
+
+
+	class AugmentedBuffer(ReplacementBuffer):
+		def __init__(self, analogue=None, label_key=None, **kwargs):
+			super().__init__(**kwargs)
+			self.analogue = analogue
+			self.label_key = label_key
+
+
+		def _get(self, sel=None, **kwargs):
+			# if self.analogue_source is not None:
+			label = self.source.get(self.label_key, sel=sel, **kwargs)
+			return self.analogue.generate_observation_from_label(label)
+
+
+
+@inherit_hparams('analogue_dataset', 'task', 'baseline_task', 'trial_task')
+class AnalogueEquiTransferTask(AnalogueTransferTask, EquivarianceTransferTask):
 	pass
 
 
 
-class EncoderTransferTask(InvarianceTransferTask):
-
+@inherit_hparams('encoder', 'analogue_dataset', 'task', 'baseline_task', 'trial_task')
+class AnalogueInvTransferTask(AnalogueTransferTask, InvariantEncoderTransferTask):
 	pass
-
-
-
-
 
 
 

@@ -148,7 +148,11 @@ class Computable(ModuleParametrized, Resultable):
 	@agnosticmethod
 	def compute(self, source=None, **kwargs):
 		info = self.create_results_container(source=source, **kwargs)
-		return self._compute(info)
+		self.info = info # TODO: clean up maybe?
+		out = self._compute(info)
+		if hasattr(self, 'info'):
+			del self.info
+		return out
 
 
 	@staticmethod
