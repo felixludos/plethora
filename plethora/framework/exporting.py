@@ -1,6 +1,6 @@
 from omnibelt import agnosticmethod
-from omnibelt import Exportable as _Old_Exportable, export, load_export
-# from omnibelt import exporting_common as _common
+from omnibelt import Exportable as _Old_Exportable#, export, load_export
+from omnibelt import exporting_common as _common
 
 from .features import Rooted
 
@@ -19,6 +19,16 @@ class Exportable(_Old_Exportable, Rooted, create_table=True):
 		if root is None:
 			root = self.get_root()
 		return super().create_load_path(name, root=root)
+
+
+
+def export(obj, name=None, root=None, fmt=None, path=None, **kwargs):
+	return Exportable.export(obj, name=name, root=root, fmt=fmt, path=path, **kwargs)
+
+
+
+def load_export(name=None, root=None, fmt=None, path=None, **kwargs):
+	return Exportable.load_export(name=name, root=root, fmt=fmt, path=path, **kwargs)
 
 
 

@@ -7,7 +7,7 @@ prt = get_printer(__file__)
 
 
 
-class AbstractGenerationTask(BatchedTask):
+class AbstractGenerationTask(abstract.Generator, BatchedTask):
 	generated_key = 'generated'
 	
 	generator = hparam(module=abstract.Generator)
@@ -21,13 +21,13 @@ class AbstractGenerationTask(BatchedTask):
 
 
 	@agnosticmethod
-	def generate(self, N, gen=None):
-		return self.generator.generate(N, gen=gen)
+	def sample(self, *shape, gen=None):
+		return self.generator.sample(*shape, gen=gen)
 
 
 	@agnosticmethod
 	def _generate_step(self, info):
-		info[self.generated_key] = self.generate(info.source.size(), gen=info.gen)
+		info[self.generated_key] = self.sample(info.source.size(), gen=info.gen)
 		return info
 
 

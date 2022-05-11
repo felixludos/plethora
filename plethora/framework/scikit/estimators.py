@@ -2,6 +2,7 @@ import copy
 
 from omnibelt import agnosticmethod
 import torch
+import torch.multiprocessing as mp
 import numpy as np
 from sklearn import metrics
 # from sklearn.ensemble import GradientBoostingRegressor, GradientBoostingClassifier
@@ -218,6 +219,8 @@ class Classifier(AbstractSupervised):
 		precision, recall, fscore, support = metrics.precision_recall_fscore_support(target_, pred_)
 
 		probs_ = self._format_scikit_arg(info['probs'].squeeze())
+		if probs_.shape[1] == 2:
+			probs_ = probs_[:,0]
 		# multi_class = 'ovr' if
 		auc = metrics.roc_auc_score(target_, probs_, multi_class='ovr')
 
@@ -253,9 +256,11 @@ class Classifier(AbstractSupervised):
 
 
 class ParallelEstimator(AbstractScikitEstimator):
-	def __init__(self, estimators, **kwargs):
+	def __init__(self, estimators, pbar=None, num_workers=None, **kwargs):
 		super().__init__(**kwargs)
 		self.estimators = estimators
+		self.pbar = pbar
+		self.num_workers = num_workers
 
 
 	def __getitem__(self, item):
@@ -277,9 +282,21 @@ class ParallelEstimator(AbstractScikitEstimator):
 			return outs
 
 
+	@staticmethod
+	def _dispatch_worker(estimator, key, inp):
+		return getattr(estimator, key)(*inp)
+
+
 	def _dispatch(self, key, *ins, **kwargs):
 		ins = self._process_inputs(key, *ins)
-		outs = [getattr(estimator, key)(*inp) for estimator, inp in zip(self.estimators, ins)]
+		itr = zip(self.estimators, [key]*len(self.estimators), ins)
+		if self.pbar is not None:
+			itr = self.pbar(itr, total=len(self.estimators), desc=key)
+		if self.num_workers is None:
+			outs = [self._dispatch_worker(estimator, key, inp) for estimator, key, inp in itr]
+		else:
+			with mp.Pool(self.num_workers) as pool:
+				outs = pool.map(self._dispatch_worker, itr)
 		return self._process_outputs(key, outs)
 
 
@@ -307,6 +324,10 @@ class ParallelEstimator(AbstractScikitEstimator):
 
 	def predict(self, data, **kwargs):
 		return self._dispatch('predict', data, **kwargs)
+
+
+	def predict_probs(self, data, **kwargs):
+		return self._dispatch('predict_probs', data, **kwargs)
 
 
 

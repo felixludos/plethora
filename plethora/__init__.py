@@ -4,31 +4,57 @@ __version__ = "0.1"
 from . import tasks
 from . import community
 from .framework import util, spaces
-from .datasets import toy, mnist
+# from .datasets import toy, mnist
+from . import datasets
 
 
 # Testing
 
 
-import omnifig as fig
-import torch
-from tqdm import tqdm
+# import omnifig as fig
+# import torch
+# from tqdm import tqdm
+#
+# from omnilearn import models, util as outil
+# from plethora.framework import util as putil
+# from .datasets import MNIST
+# from .framework import Criterion, using_rng, export, load_export
+# from .framework.extractors import Timm_Extractor
+# from . import tasks
+# from .framework import wrapped
+# # from .tasks import ReconstructionTask, FID_GenerationTask
+# from plethora import datasets
+# from plethora.framework import distributions
+#
+# from plethora.community import download_bits_back
+#
+# import matplotlib.pyplot as plt
 
-from omnilearn import models  # as outil
-from plethora.framework import util as putil
-from .datasets import MNIST
-from .framework import Criterion, using_rng
-from .framework.extractors import Timm_Extractor
-from . import tasks
-from .framework import wrapped
-# from .tasks import ReconstructionTask, FID_GenerationTask
-from plethora import datasets
-from plethora.framework import distributions
-
-from plethora.community import download_bits_back
-
-@fig.Script('test')
+# @fig.Script('test')
 def _test_script(A):
+	# dataset = datasets.Celeba(mode='train')#.prepare()
+	#
+	# print(len(dataset))
+	#
+	# dataset.prepare()
+	#
+	# print(len(dataset))
+	# print(dataset.din, dataset.dout)
+	#
+	# batch = dataset.get_batch()
+	# X, Y = batch['observation'], batch['target']
+	#
+	# print(X.shape)
+	# print(Y)
+	#
+	# outil.plot_imgs(X);
+	# plt.show()
+	#
+	# print(len(dataset))
+	#
+	# return
+
+
 	# dataset = datasets.Shapes3D(download=False, mode='train').prepare()
 	# print(dataset.fingerprint())
 	# with using_rng(10):
@@ -84,6 +110,7 @@ def _test_script(A):
 	# return
 
 	device = 'cuda'
+	# device = 'cpu'
 
 	dataset = datasets.Shapes3D(download=False, mode='train')
 	# dataset = MNIST(batch_device=device, batch_size=200)
@@ -119,8 +146,9 @@ def _test_script(A):
 
 	# criterion = MSE()
 
-	# task = tasks.InferenceTask(dataset=dataset, pbar=tqdm, num_samples=1000,
-	#                           encoder=enc)
+	task = tasks.InferenceTask(dataset=dataset, pbar=tqdm, num_samples=1000,
+	                           # num_workers=4,
+	                          encoder=enc)
 
 	# task = tasks.PR_GenerationTask(dataset=dataset, pbar=tqdm,
 	#                           num_samples=10000, batch_size=100,
@@ -140,9 +168,9 @@ def _test_script(A):
 	# task = tasks.LosslessCompressionTask(dataset=dataset, pbar=tqdm, num_samples=1000, batch_size=100,
 	#                                      compressor_name='lzma')
 
-	task = tasks.CorrelationMetricTask(dataset=dataset, pbar=tqdm, metric_name='l2',
-	                          num_samples=1000, batch_size=100,
-	                          encoder=enc)
+	# task = tasks.CorrelationMetricTask(dataset=dataset, pbar=tqdm, metric_name='l2',
+	#                           num_samples=1000, batch_size=100,
+	#                           encoder=enc)
 
 	with torch.no_grad():
 		# out = task.compute(batch)

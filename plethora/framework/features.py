@@ -167,11 +167,11 @@ class Prepared: # TODO: add autoprepare using __certify__
 
 
 
-DEFAULT_ROOT = os.getenv('PLETHORA_PATH', 'local_data/')
-
 
 
 class Rooted:
+	_DEFAULT_MASTER_ROOT = os.getenv('PLETHORA_PATH', 'local_data/')
+
 	_root = None
 	def __init__(self, root=unspecified_argument, **kwargs):
 		super().__init__(**kwargs)
@@ -179,10 +179,10 @@ class Rooted:
 			self._root = root
 
 
-	@staticmethod
-	def _infer_root(root=None):
+	@classmethod
+	def _infer_root(cls, root=None):
 		if root is None:
-			root = DEFAULT_ROOT
+			root = cls._DEFAULT_MASTER_ROOT
 		root = Path(root)
 		os.makedirs(str(root), exist_ok=True)
 		return root

@@ -120,7 +120,8 @@ class Epoched(AbstractCountableData, Batchable, Seeded): # TODO: check Seeded an
 	
 
 	def get_iterator(self, epochs=1, num_samples=None, num_batches=None, infinite=False, hard_limit=True,
-	                 batch_size=None, shuffle=None, force_batch_size=None, gen=None, sel=None, pbar=None, **kwargs):
+	                 batch_size=None, shuffle=None, force_batch_size=None, gen=None, sel=None,
+	                 pbar=None, pbar_samples=True, **kwargs):
 		if batch_size is None:
 			batch_size = self.batch_size
 		if force_batch_size is None:
@@ -150,7 +151,8 @@ class Epoched(AbstractCountableData, Batchable, Seeded): # TODO: check Seeded an
 		else:
 			total_samples = samples_per_epoch * epochs
 		if pbar is not None:
-			pbar = pbar(total=total_samples)
+			pbar = pbar(total=total_samples if pbar_samples else total_samples // batch_size,
+			            unit='smpl' if pbar_samples else 'batch')
 			
 		while total_samples is None or total_samples > 0:
 			sels = self.generate_selections(sel=subsel, num_samples=total_samples, batch_size=batch_size,
@@ -162,8 +164,8 @@ class Epoched(AbstractCountableData, Batchable, Seeded): # TODO: check Seeded an
 					if hard_limit and total_samples < 0:
 						break
 				if pbar is not None:
-					pbar.update(N)
-				yield self.create_batch(sel=sel)
+					pbar.update(N if pbar_samples else 1)
+				yield self.create_batch(sel=sel, pbar=pbar)
 				if total_samples is not None and total_samples <= 0:
 					break
 		if pbar is not None:
@@ -510,6 +512,16 @@ class CountableView(AbstractCountableDataView, Epoched, SourceView):
 
 
 class CachedView(SourceView, base.Container):
+	def __init__(self, pbar=None, **kwargs):
+		super().__init__(**kwargs)
+		self._pbar = pbar
+
+
+	def set_description(self, desc):
+		if self._pbar is not None:
+			self._pbar.set_description(desc)
+
+
 	def is_cached(self, item):
 		return super(DataSource, self).__contains__(item)
 
@@ -589,14 +601,16 @@ class Subsetable(Epoched):
 		return part1, part2
 
 
-	def subset(self, cut=None, sel=None, shuffle=False, hard_copy=True):
+	def subset(self, cut=None, sel=None, shuffle=False, hard_copy=True, gen=None):
 		if sel is None:
-			sel, _ = self._split_indices(indices=self.shuffle_indices(self.size(), gen=self.gen)
+			sel, _ = self._split_indices(indices=self.shuffle_indices(self.size(), gen=gen)
 			if shuffle else torch.arange(self.size()), cut=cut)
 		return self.create_view(sel=sel)
 
 
-	def split(self, splits, shuffle=False):
+	def split(self, splits, shuffle=False, gen=None):
+		if gen is None:
+			gen = self.gen
 		auto_name = isinstance(splits, (list, tuple, set))
 		if auto_name:
 			named_cuts = [(f'part{i}', r) for i, r in enumerate(splits)]
@@ -634,7 +648,7 @@ class Subsetable(Epoched):
 		if remaining > 0:
 			nums[-1] += remaining
 
-		indices = self.shuffle_indices(self.size(), gen=self.gen) if shuffle else torch.arange(self.size())
+		indices = self.shuffle_indices(self.size(), gen=gen) if shuffle else torch.arange(self.size())
 
 		plan = dict(zip(names, nums))
 		parts = {}
@@ -701,10 +715,10 @@ class Dataset(Subsetable, DataCollection):
 		return buffer.create_view(sel=sel, **kwargs)
 
 
-	def subset(self, cut=None, sel=None, shuffle=False, src_ref=True, hard_copy=True):
+	def subset(self, cut=None, sel=None, shuffle=False, src_ref=True, hard_copy=True, gen=None):
 		if hard_copy:
 			if sel is None:
-				sel, _ = self._split_indices(indices=self.shuffle_indices(self.size(), gen=self.gen)
+				sel, _ = self._split_indices(indices=self.shuffle_indices(self.size(), gen=gen)
 				if shuffle else torch.arange(self.size()), cut=cut)
 			new = self.copy()
 			if src_ref:
@@ -714,7 +728,7 @@ class Dataset(Subsetable, DataCollection):
 				new.register_buffer(name, buffer if isinstance(buffer, str)
 				else self._create_buffer_view(buffer, sel=sel))
 		else:
-			new = super().subset(cut=cut, sel=sel, shuffle=shuffle)
+			new = super().subset(cut=cut, sel=sel, shuffle=shuffle, gen=gen)
 		if self.mode is not None:
 			self.register_modes(**{self.mode: new})
 		return new
@@ -1130,11 +1144,16 @@ class ImageDataset(ObservationDataset, RootedDataset):
 			super().__init__('use download=True to enable automatic download.')
 
 
-	# @classmethod
-	# def _default_buffer_factory(cls, ):
-	#
-	#
-	# 	pass
+	class ImageBuffer(Buffer):
+		def process_image(self, image):
+			if not self.space.as_bytes:
+				return image.float().div(255)
+			return image
+
+
+		def _get(self, *args, **kwargs):
+			return self.process_image(super()._get(*args, **kwargs))
+
 
 
 

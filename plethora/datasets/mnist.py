@@ -8,14 +8,6 @@ from .base import SupervisedDataset, Buffer, ImageDataset
 from ..framework import spaces
 
 
-class ImageBuffer(Buffer):
-	def _get(self, *args, **kwargs):
-		out = super()._get(*args, **kwargs)
-		if not self.space.as_bytes:
-			out = out.float().div(255)
-		return out
-
-
 
 class Torchvision_Toy_Dataset(SupervisedDataset, ImageDataset):
 	def __init__(self, resize=True, target_attr='targets',
@@ -34,7 +26,7 @@ class Torchvision_Toy_Dataset(SupervisedDataset, ImageDataset):
 		if resize and _observation_space is not None:
 			_observation_space.width = 32
 			_observation_space.height = 32
-		self.register_buffer('observation', ImageBuffer(), space=_observation_space)
+		self.register_buffer('observation', self.ImageBuffer(), space=_observation_space)
 		self.register_buffer('target', space=_target_space)
 
 		self.resize = resize

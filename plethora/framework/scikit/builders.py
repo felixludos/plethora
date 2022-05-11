@@ -6,9 +6,13 @@ from .estimators import JointEstimator, ScikitEstimatorWrapper, Regressor, Class
 
 class AbstractScikitBuilder(ModelBuilder):
 
+	pbar = None
+	num_workers = None
+
 	JointEstimator = JointEstimator
 	def create_joint(self, din, dout, estimators, **kwargs):
-		return self.JointEstimator(estimators, din=din, dout=dout, **kwargs)
+		return self.JointEstimator(estimators, din=din, dout=dout, pbar=self.pbar, num_workers=self.num_workers,
+		                           **kwargs)
 
 
 	def create_regressor(self, din, dout):

@@ -237,8 +237,8 @@ class Function(Fingerprinted):
 		return data
 
 
-	def __call__(self, *args, **kwargs):
-		raise NotImplementedError
+	# def __call__(self, *args, **kwargs):
+	# 	raise NotImplementedError
 	
 
 

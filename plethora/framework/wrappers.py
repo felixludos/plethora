@@ -82,8 +82,8 @@ class Decoder(_Decoder, _ImplicitModel):
 
 
 class Generator(_Generator, _ImplicitModel):
-	def generate(self, N, gen=None):
-		return self._process_output(self.fn(N, gen=gen))
+	def sample(self, *shape, gen=None):
+		return self._process_output(self.fn(*shape, gen=gen))
 
 
 

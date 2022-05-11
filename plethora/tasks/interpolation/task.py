@@ -1,168 +1,169 @@
 
 import torch
-from omnibelt import get_printer
-from ...framework import abstract
-from ..base import Task, BatchedTask
+from omnibelt import get_printer, agnosticmethod, unspecified_argument
+from ...framework import util, hparam, inherit_hparams, models, util, abstract, math
+from ..base import Task, BatchedTask, SimpleEvaluationTask
 
 from .criterion import PathDiscriminator
 
 prt = get_printer(__file__)
 
 
-# TODO
 
-
-class LinearInterpolator:
+class LinearInterpolator(abstract.Interpolator):
 	@staticmethod
 	def interpolate(start, end, n_steps=12):
 		a, b = start.unsqueeze(1), end.unsqueeze(1)
-		progress = torch.linspace(0., 1., steps=n_steps, device=a.device)\
-			.view(1, n_steps, *[1]*len(a.shape[2:]))
+		progress = torch.linspace(0., 1., steps=n_steps, device=a.device).view(1, n_steps, *[1]*len(a.shape[2:]))
 		steps = a + (b-a)*progress
 		return steps
 
 
 
-class AbstractInterpolationTask(BatchedTask):
-	@classmethod
-	def _compute_step(cls, batch, info, **kwargs):
-		info.clear()
-		info.set_batch(batch)
-		cls._encode(info)
-		cls._interpolate(info)
-		cls._eval_interpolations(info)
+class AbstractInterpolationTask(SimpleEvaluationTask):
+	@agnosticmethod
+	def _compute_step(self, info):
+		self._pairs_step(info)
+		self._interpolate_step(info)
+		self._eval_interpolations_step(info)
 		return info
 
 
 	@staticmethod
-	def _encode(info):
+	def _interpolate_step(info):
 		raise NotImplementedError
 
 
 	@staticmethod
-	def _interpolate(info):
-		raise NotImplementedError
-
-
-	@staticmethod
-	def _eval_interpolations(info):
+	def _eval_interpolation_step(info):
 		raise NotImplementedError
 
 
 
-class InterpolationTask(AbstractInterpolationTask):
-	def __init__(self, encoder=None, interpolator=None, decoder=None,
-	             path_criterion=None, discriminator=None, num_steps=12,
-	             score_key=None, **kwargs):
-		if score_key is None:
-			score_key = 'mean'
-		super().__init__(score_key=score_key, **kwargs)
-		
-		self.encoder = encoder
-		self.interpolator = interpolator
-		self.decoder = decoder
-		self.path_criterion = path_criterion
-		self.discriminator = discriminator
-		
-		self.num_steps = num_steps
+class InterpolationTask(AbstractInterpolationTask, abstract.Interpolator, abstract.PathCriterion):
+	observation_key = 'observation'
+	endpoint_key = None
+	paths_key = 'paths'
+
+	interpolator = hparam(module=abstract.Interpolator)
+	path_criterion = hparam(module=abstract.PathCriterion)
+	num_steps = hparam(12)
+	use_pairwise = hparam(True) # compare all pairs in batch, otherwise just compares half of the batch
 
 
-	@staticmethod
-	def score_names():
-		return ['mean', 'std', 'min', 'max', *super().score_names()]
+	def __init__(self, **kwargs):
+		super().__init__(**kwargs)
+		if self.endpoint_key is None:
+			self.endpoint_key = self.observation_key
 
 
-	@staticmethod
-	def create_results_container(dataset=None, **kwargs):
-		return AccumulationContainer(dataset=dataset, **kwargs)
+	@agnosticmethod
+	def interpolate(self, start, end, n_steps=None):
+		if n_steps is None:
+			n_steps = self.num_steps
+		return self.interpolator.interpolate(start, end, n_steps=n_steps)
 
 
-	@staticmethod
-	def _default_interpolator():
-		return LinearInterpolator
+	@agnosticmethod
+	def compare(self, paths, starts, ends):
+		return self.path_criterion.compare(paths, starts, ends)
 
 
-	def _wrap_discriminator(self, discriminator, **kwargs):
-		return PathDiscriminator(discriminator)
+	@agnosticmethod
+	def _generate_pairs(self, samples):
+		if self.use_pairwise:
+			i,j = torch.triu_indices(len(samples), len(samples), offset=1)
+			return samples[i], samples[j]
+		return samples.chunk(2)
 
 
-	def _compute(self, **kwargs):
-		return super()._compute(encoder=self.encoder, interpolator=self.interpolator, decoder=self.decoder,
-		                        path_criterion=self.path_criterion, discriminator=self.discriminator,
-		                        num_steps=self.num_steps, **kwargs)
-
-
-	@classmethod
-	def prepare(cls, encoder=None, interpolator=None, decoder=None,
-	            path_criterion=None, discriminator=None, num_steps=None,
-	            **kwargs):
-		if encoder is None:
-			prt.warning('No encoder provided')
-		if interpolator is None:
-			prt.warning('No interpolator provided (using default)')
-			interpolator = cls._default_interpolator()
-		if decoder is None:
-			prt.info('No decoder provided')
-		if path_criterion is None:
-			if discriminator is None:
-				prt.warning('No path_criterion provided')
-			else:
-				path_criterion = cls._wrap_discriminator(discriminator)
-				prt.warning('No path_criterion provided (using discriminator)')
-		info = super().prepare(**kwargs)
-		info.encoder = encoder
-		info.interpolator = interpolator
-		info.decoder = decoder
-		info.path_criterion = path_criterion
-		info.num_steps = num_steps
+	@agnosticmethod
+	def _pairs_step(self, info):
+		info[f'{self.endpoint_key}_start'], \
+		info[f'{self.endpoint_key}_end'] = self._generate_pairs(info[self.endpoint_key])
 		return info
 
 
-	@staticmethod
-	def _encode(info):
-		if 'original' not in info:
-			info['original'] = batch
-		code = info['original'] if info.encoder is None else info.encoder.encode(info['original'])
-		info['code'] = code
+	@agnosticmethod
+	def _interpolate_step(self, info):
+		info[self.paths_key] = self.interpolate(info[f'{self.endpoint_key}_start'], info[f'{self.endpoint_key}_end'])
+		# info['paths'] = info['steps'] if info.decoder is None \
+		# 	else util.split_dim(info.decoder.decode(util.combine_dims(info['steps'], 0, 2)), -1, self._num_steps)
 		return info
 
 
-	@staticmethod
-	def _interpolate(info):
-		if 'start' not in info or 'end' not in info:
-			info['start'], info['end'] = info['code'].split(2)
-		start, end = info['start'], info['end']
-		info['steps'] = info.interpolator(start, end, self._num_steps)
-		info['paths'] = info['steps'] if info.decoder is None \
-			else util.split_dim(info.decoder.decode(util.combine_dims(info['steps'], 0, 2)), -1, self._num_steps)
-		return info
-
-
-	@staticmethod
-	def _eval_paths(info):
-		criteria = info.path_criterion(info['paths'])
-		info.accumulate(criteria)
+	@agnosticmethod
+	def _eval_interpolation_step(self, info):
+		info[self.scores_key] = self.compare(info[self.paths_key],
+		                                     info[f'{self.endpoint_key}_start'], info[f'{self.endpoint_key}_end'])
 		return info
 	
 
-	@classmethod
-	def aggregate(cls, info, slim=False, online=False, seed=None, gen=None):
+	@agnosticmethod
+	def aggregate(self, info):
 		info = super().aggregate(info)
 
-		criteria = info.aggregate()
-		path_criteria = criteria.view(criteria.shape[0], -1).mean(-1)
+		scores = info[self.scores_key] # N x num_steps
 
 		info.update({
-			'criteria': criteria,
-			'mean': path_criteria.mean(),
-			'max': path_criteria.max(),
-			'min': path_criteria.min(),
-			'std': path_criteria.std(),
+			'path_mean': scores.mean(0),
+			'path_max': scores.max(0)[0],
+			'path_min': scores.min(0)[0],
+			'path_std': scores.std(0),
 		})
 		return info
 
 
 
+# class LatentInterpolationTask(InterpolationTask, abstract.Encoder, abstract.Decoder):
+# 	latent_key = 'latent'
+# 	paths_key = 'steps'
+# 	paths_key = 'steps'
+#
+# 	encoder = hparam(module=abstract.Encoder)
+# 	decoder = hparam(module=abstract.Decoder)
+#
+#
+# 	def __init__(self, **kwargs):
+# 		super().__init__(**kwargs)
+# 		if self.endpoint_key is None:
+# 			self.endpoint_key = self.latent_key
+#
+#
+# 	@agnosticmethod
+# 	def encode(self, observation):
+# 		return self.encoder.encode(observation)
+#
+#
+# 	@agnosticmethod
+# 	def decode(self, latent):
+# 		return self.decoder.decode(latent)
+#
+#
+# 	@agnosticmethod
+# 	def _encode_step(self, info):
+# 		info[self.latent_key] = self.encode(info[self.observation_key])
+# 		return info
+#
+#
+# 	@agnosticmethod
+# 	def _decode_step(self, info):
+# 		info[self.latent_key] = self.encode(info[self.observation_key])
+# 		return info
+#
+#
+# 	@agnosticmethod
+# 	def _pairs_step(self, info):
+# 		info = self._encode_step(info)
+# 		info = super()._pairs_step(info)
+# 		return info
+#
+#
+# 	@agnosticmethod
+# 	def _interpolate_step(self, info):
+# 		info = super()._interpolate_step(info)
+# 		info = self._decode_step(info)
+# 		return info
 
 
 

@@ -6,14 +6,13 @@ from torch.distributions.utils import lazy_property
 from torch.distributions import constraints
 
 from .util.tensors import SpaceTensor, WrappedTensor
-from .features import Device
-from .random import Seeded
-from .models import Generator
+from .features import Device, Fingerprinted
+from .random import Generator
 
 
-
+# TODO: make exportable
 # TODO: add warnings for non-seeded functions like rsample()
-class Distribution(Generator, Seeded, distrib.Distribution): # TODO: saving and loading distributions
+class Distribution(Generator, Fingerprinted, distrib.Distribution): # TODO: saving and loading distributions
 	def __init__(self, params=None, apply_constraints=False, constraints=None, soft_constraints=False, **kwargs):
 		if params is None:
 			params = {key: kwargs[key] for key in self.arg_constraints if key in kwargs}
@@ -29,10 +28,10 @@ class Distribution(Generator, Seeded, distrib.Distribution): # TODO: saving and 
 		return {key: self.constrain_value(constraints.get(key), val, **kwargs) for key, val in params.items()}
 
 
-	def sample(self, sample_shape=torch.Size()):
-		if isinstance(sample_shape, int):
-			sample_shape = sample_shape,
-		return super().sample(sample_shape)
+	# def sample(self, sample_shape=torch.Size()):
+	# 	if isinstance(sample_shape, int):
+	# 		sample_shape = sample_shape,
+	# 	return super().sample(sample_shape)
 
 
 	def best(self):
@@ -50,14 +49,9 @@ class Distribution(Generator, Seeded, distrib.Distribution): # TODO: saving and 
 				yield (key, val)
 
 
-	def generate(self, N=None, gen=None):
-		if gen is None:
-			gen = self.gen
-		return self._generate(N, gen)
-
-
-	def _generate(self, N, gen):
-		raise NotImplementedError
+	def _fingerprint_data(self):
+		params = {key: self.fingerprint_obj(getattr(self, key)) for key in self._param_keys if hasattr(self, key)}
+		return {'params': params, **super()._fingerprint_data()}
 
 
 	def copy(self, **kwargs):
@@ -114,8 +108,8 @@ class NormalDistribution(Distribution, distrib.Normal):
 		super().__init__(loc=loc, scale=scale, **kwargs)
 
 
-	def _generate(self, N, gen):
-		shape = self._extended_shape(() if N is None else (N,))
+	def _sample(self, shape, gen):
+		shape = self._extended_shape(shape)
 		noise = torch.randn(*shape, generator=gen)
 		return noise.mul(self.scale) + self.loc
 
@@ -129,16 +123,14 @@ class CategoricalDistribution(Distribution, distrib.Categorical):
 		return self._param.argmax(-1)
 
 
-	def _generate(self, N, gen):
-		if N is None:
-			N = torch.Size()
+	def _sample(self, shape, gen):
 		probs_2d = self.probs.reshape(-1, self._num_events)
-		samples_2d = torch.multinomial(probs_2d, N.numel(), True, generator=gen).T
-		return samples_2d.reshape(self._extended_shape(N))
+		samples_2d = torch.multinomial(probs_2d, shape.numel(), True, generator=gen).T
+		return samples_2d.reshape(self._extended_shape(shape))
 
 
 
-class DistributionTensor(WrappedTensor):
+class DistributionTensor(Fingerprinted, WrappedTensor):
 
 	_base_distribution = None
 	@classmethod
@@ -160,6 +152,10 @@ class DistributionTensor(WrappedTensor):
 		return obj
 
 
+	def _fingerprint_data(self):
+		return {'distribution': self.fingerprint_obj(self._distribution), **super()._fingerprint_data()}
+
+
 	# def __repr__(self):
 	# 	return repr(self.distribution)
 
@@ -169,7 +165,6 @@ class DistributionTensor(WrappedTensor):
 		copy.__dict__.update(self.__dict__)
 		copy.data = self.data
 		return copy
-
 
 
 	@property

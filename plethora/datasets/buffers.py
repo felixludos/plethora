@@ -2,7 +2,7 @@
 import math
 import torch
 import h5py as hf
-from ..framework import base, Rooted, DeviceContainer
+from ..framework import base, Rooted, DeviceContainer, util
 
 
 class TransformableBuffer(base.AbstractBuffer):
@@ -223,8 +223,13 @@ class RemoteBuffer(Buffer):
 
 	def _get(self, sel=None, **kwargs):
 		if self.data is None:
-			return super(Buffer, self)._get(sel=sel, **kwargs)
+			return self._get_remote(sel=sel, **kwargs)
+			# return super(Buffer, self)._get(sel=sel, **kwargs)
 		return super()._get(sel=sel, **kwargs)
+
+
+	def _get_remote(self, sel=None, **kwargs):
+		raise NotImplementedError
 
 
 	def _update(self, sel=None, **kwargs):
@@ -235,7 +240,7 @@ class RemoteBuffer(Buffer):
 
 
 class HDFBuffer(RemoteBuffer):
-	def __init__(self, dataset_name=None, path=None, default_len=None, shape=None, **kwargs):
+	def __init__(self, dataset_name=None, path=None, default_len=None, shape=None, dtype=None, **kwargs):
 		if path is not None and path.exists() and dataset_name is not None:
 			with hf.File(str(path), 'r') as f:
 				if dataset_name in f:
@@ -250,6 +255,7 @@ class HDFBuffer(RemoteBuffer):
 
 		self._shape = shape
 		self._selected = None
+		self._dtype = util.pytorch_type(dtype)
 		self._register_deviced_children(_selected=None)
 
 
@@ -280,7 +286,14 @@ class HDFBuffer(RemoteBuffer):
 			self._selected = sel if self._selected is None else self._selected[sel]
 
 
-	def _get(self, sel=None, device=None, **kwargs):
+	def process_hdf_sample(self, sample):
+		sample = torch.as_tensor(sample)
+		if self._dtype is not None:
+			sample = sample.type(self._dtype)
+		return sample
+
+
+	def _get_remote(self, sel=None, **kwargs):
 		if sel is None:
 			sel = ()
 		else:
@@ -290,10 +303,7 @@ class HDFBuffer(RemoteBuffer):
 
 		with hf.File(str(self.path), 'r') as f:
 			sample = f[self.key_name][sel]
-		sample = torch.as_tensor(sample)
-		if device is not None:
-			sample = sample.to(device)
-		return sample
+		return self.process_hdf_sample(sample)
 
 
 
@@ -310,6 +320,10 @@ class BufferView(AbstractCountableDataView, RemoteBuffer):
 		if self.source is None:
 			raise self.NoSource
 		return self.source.prepare(sel=sel, **kwargs)
+
+
+	def _get_remote(self, sel=None, **kwargs):
+		return super(Buffer, self)._get(sel=sel, **kwargs)
 
 
 	@property
@@ -333,11 +347,10 @@ class ReplacementBuffer(RemoteBuffer):
 		self.source = source
 		self.key = key
 
-
-	def _get(self, sel=None, **kwargs):
+	def _get_remote(self, sel=None, **kwargs):
 		if self.source is not None and self.key is not None:
 			return self.source.get(self.key, sel=sel, **kwargs)
-		return super()._get(sel=sel, **kwargs)
+		return super()._get_remote(sel=sel, **kwargs)
 
 
 

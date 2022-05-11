@@ -444,9 +444,45 @@ class Spatial(MultiDim): # order of some dimensions is not permutable (channel d
 		shape = (channels,) if size is None else (
 			(channels, *size) if channel_first else (*size, channels))
 
+		self._channel_first = channel_first
 		super().__init__(channels=channels, shape=shape, **kwargs)
-		self.channel_first = channel_first
-		self.size = size
+
+
+	@property
+	def channel_first(self):
+		return self._channel_first
+	@channel_first.setter
+	def channel_first(self, val):
+		if val != self.channel_first:
+			channels, size = self.channels, self.size
+			self.shape = (channels, *size) if val else (*size, channels)
+			self._channel_first = val
+
+
+	@property
+	def channels(self):
+		return self.shape[0] if self.channel_first else self.shape[-1]
+	@channels.setter
+	def channels(self, val):
+		self.shape = (val, *self.size) if self.channel_first else (*self.size, val)
+
+
+	@property
+	def C(self):
+		return self.channels
+	@C.setter
+	def C(self, val):
+		self.channels = val
+
+
+	@property
+	def size(self):
+		return self.shape[1:] if self.channel_first else self.shape[:-1]
+	@size.setter
+	def size(self, val):
+		if isinstance(val, int):
+			val = (val,)
+		self.shape = (self.channels, *val) if self.channel_first else (*val, self.channels)
 
 
 	def __str__(self):
@@ -457,11 +493,24 @@ class Spatial(MultiDim): # order of some dimensions is not permutable (channel d
 class Sequence(Spatial):
 	def __init__(self, channels=1, length=None, **kwargs):
 		super().__init__(channels=channels, shape=(length,), **kwargs)
-		self.length = length
+		self._length = length
+
+	@property
+	def length(self):
+		return self._length
+	@length.setter
+	def length(self, val):
+		self._length = val
+		self.size = (val,)
+
 
 	@property
 	def L(self):
 		return self.length
+	@L.setter
+	def L(self, val):
+		self.length = val
+
 
 	def __str__(self):
 		return f'{self.__class__.__name__}(C={self.channels}, L={self.length})'
@@ -471,16 +520,41 @@ class Sequence(Spatial):
 class Image(Spatial):
 	def __init__(self, channels=1, height=None, width=None, **kwargs):
 		super().__init__(channels=channels, shape=(height, width), **kwargs)
-		self.height = height
-		self.width = width
+		self._height = height
+		self._width = width
+
+	@property
+	def height(self):
+		return self._height
+	@height.setter
+	def height(self, val):
+		self._height = val
+		self.size = (val, self.width)
+
+
+	@property
+	def width(self):
+		return self._width
+	@width.setter
+	def width(self, val):
+		self._width = val
+		self.size = (self.height, val)
 
 	@property
 	def H(self):
 		return self.height
+	@H.setter
+	def H(self, val):
+		self.height = val
+
 
 	@property
 	def W(self):
 		return self.width
+	@W.setter
+	def W(self, val):
+		self.width = val
+
 
 	def __str__(self):
 		return f'{self.__class__.__name__}(C={self.channels}, H={self.height}, W={self.width})'
@@ -500,21 +574,58 @@ class Pixels(Image, Bound):
 class Volume(Spatial):
 	def __init__(self, channels=1, height=None, width=None, depth=None, **kwargs):
 		super().__init__(channels=channels, shape=(height, width, depth), **kwargs)
-		self.height = height
-		self.width = width
-		self.depth = depth
+		self._height = height
+		self._width = width
+		self._depth = depth
+
+
+	@property
+	def height(self):
+		return self._height
+	@height.setter
+	def height(self, val):
+		self._height = val
+		self.size = (val, self.width, self.depth)
+
+
+	@property
+	def width(self):
+		return self._width
+	@width.setter
+	def width(self, val):
+		self._width = val
+		self.size = (self.height, val, self.depth)
+
+
+	@property
+	def depth(self):
+		return self._depth
+	@depth.setter
+	def depth(self, val):
+		self._depth = val
+		self.size = (self.height, self.width, val)
+
 
 	@property
 	def H(self):
 		return self.height
+	@H.setter
+	def H(self, val):
+		self.height = val
 
 	@property
 	def W(self):
 		return self.width
+	@W.setter
+	def W(self, val):
+		self.width = val
 
 	@property
 	def D(self):
 		return self.depth
+	@D.setter
+	def D(self, val):
+		self.depth = val
 
 	def __str__(self):
 		return f'{self.__class__.__name__}(C={self.channels}, H={self.height}, W={self.width}, D={self.depth})'

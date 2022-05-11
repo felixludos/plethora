@@ -2,14 +2,16 @@ import os
 from omnibelt import agnosticmethod
 import numpy as np
 import torch
+from torch import nn
+from torch.nn import functional as F
 import subprocess
 import wget
 import h5py as hf
 
-from ..framework import spaces
-from .base import ImageDataset, SyntheticDataset
-from .buffers import TransformedBuffer
-from .mnist import ImageBuffer
+from ..framework import spaces, util
+from .base import ImageDataset, SyntheticDataset, SupervisedDataset
+from .buffers import TransformedBuffer, HDFBuffer
+# from .mnist import ImageBuffer
 
 
 class DownloadableHDF(ImageDataset):
@@ -69,7 +71,7 @@ class dSprites(DownloadableHDF, SyntheticDataset):
 		# 	default_len = 737280
 		super().__init__(default_len=default_len, **kwargs)
 
-		self.register_buffer('observation', ImageBuffer(),
+		self.register_buffer('observation', self.ImageBuffer(),
 		                     space=spaces.Pixels(1, 64, 64, as_bytes=as_bytes))
 
 		_shape_names = ['square', 'ellipse', 'heart']
@@ -148,7 +150,7 @@ class Shapes3D(DownloadableHDF, SyntheticDataset):
 		_hue_names = ['red', 'orange', 'yellow', 'green', 'seagreen', 'cyan', 'blue', 'dark-blue', 'purple', 'pink']
 		_shape_names = ['cube', 'cylinder', 'ball', 'capsule']
 
-		self.register_buffer('observation', ImageBuffer(),
+		self.register_buffer('observation', self.ImageBuffer(),
 		                     space=spaces.Pixels(3, 64, 64, as_bytes=as_bytes))
 		self.register_buffer('mechanism',
 		                     space=spaces.Joint(spaces.Periodic(),
@@ -243,7 +245,7 @@ class MPI3D(ImageDataset, SyntheticDataset):
 			_shapes = ['mug', 'ball', 'banana', 'cup']
 			_colors = ['yellow', 'green', 'olive', 'red']
 
-		self.register_buffer('observation', ImageBuffer(),
+		self.register_buffer('observation', self.ImageBuffer(),
 		                     space=spaces.Pixels(3, 64, 64, as_bytes=as_bytes))
 
 		self.register_buffer('label',
@@ -324,7 +326,163 @@ class MPI3D(ImageDataset, SyntheticDataset):
 
 
 
+class CelebA(ImageDataset, SupervisedDataset):
+	name = 'celeba'
 
+	def __init__(self, target_type='attr',
+	             crop_size=128, resize=None, resize_mode='bilinear', # these args shouldn't be changed
+	             as_bytes=False, mode=None, **kwargs):
+		super().__init__(mode=mode, **kwargs)
+		assert target_type in {'attr', 'identity', 'landmark'}, f'unknown: {target_type}'
+		if target_type != 'attr':
+			raise NotImplementedError
+		self.target_type = target_type
+
+		_labels_dataset_keys = {
+			'attr': 'attrs',
+			'identity': 'identities',
+			'landmark': 'landmarks',
+		}
+
+		img_space = spaces.Pixels(3, 218, 178, as_bytes=as_bytes)
+		if crop_size is not None:
+			if isinstance(crop_size, int):
+				crop_size = crop_size, crop_size
+			img_space.height, img_space.width = crop_size
+		if resize is not None:
+			if isinstance(resize, int):
+				resize = resize, resize
+			img_space.height, img_space.width = resize
+
+		_all_attr_names = ['5_o_Clock_Shadow', 'Arched_Eyebrows', 'Attractive', 'Bags_Under_Eyes',
+	              'Bald', 'Bangs', 'Big_Lips', 'Big_Nose', 'Black_Hair', 'Blond_Hair',
+	              'Blurry', 'Brown_Hair', 'Bushy_Eyebrows', 'Chubby', 'Double_Chin',
+	              'Eyeglasses', 'Goatee', 'Gray_Hair', 'Heavy_Makeup', 'High_Cheekbones',
+	              'Male', 'Mouth_Slightly_Open', 'Mustache', 'Narrow_Eyes', 'No_Beard',
+	              'Oval_Face', 'Pale_Skin', 'Pointy_Nose', 'Receding_Hairline', 'Rosy_Cheeks',
+	              'Sideburns', 'Smiling', 'Straight_Hair', 'Wavy_Hair', 'Wearing_Earrings',
+	              'Wearing_Hat', 'Wearing_Lipstick', 'Wearing_Necklace', 'Wearing_Necktie', 'Young', ]
+		target_space = spaces.Joint(*[spaces.Binary() for _ in _all_attr_names], names=_all_attr_names)
+
+		root = self.get_root()
+		filename = 'celeba_test.h5' if mode == 'test' else 'celeba_train.h5'
+		path = root / filename
+
+		img_buffer = self.register_buffer('observation',
+		                                  self.ImageBuffer(dataset_name='images', path=path, crop=crop_size,
+		                                                     resize=resize, resize_mode=resize_mode),
+		                                  space=img_space)
+		self.register_buffer('target', HDFBuffer(dataset_name=_labels_dataset_keys[self.target_type], path=path,
+		                                         dtype='float'),
+		                     space=target_space)
+
+		self._default_len = len(img_buffer)
+
+
+	class ImageBuffer(HDFBuffer, ImageDataset.ImageBuffer):
+		def __init__(self, crop=None, crop_base=None,
+		             resize=None, resize_mode='bilinear', epsilon=1e-8, **kwargs):
+			super().__init__(**kwargs)
+			self.crop = crop
+			# if crop is not None and crop[0] != crop[1]:
+			# 	raise NotImplementedError
+
+			self.resize = resize
+			self.resize_mode = resize_mode
+			self._epsilon = epsilon
+
+
+		def _prepare_sel(self, sel=None, **kwargs):
+			if sel is None:
+				sel = ()
+			else:
+				if self._selected is not None:
+					sel = self._selected[sel]
+				sel = torch.as_tensor(sel).numpy()
+
+			with hf.File(str(self.path), 'r') as f:
+				sample = f[self.key_name][sel]
+			self.data = sample # list of jpeg strings
+
+
+		def _load_jpeg_image(self, idx):
+			img = torch.from_numpy(util.str_to_jpeg(self.data[idx])).permute(2, 0, 1)
+			return img
+
+
+		def _get(self, sel=None, **kwargs):
+			if sel is None:
+				sel = torch.arange(len(self))
+			images = torch.stack([self._load_jpeg_image(i) for i in sel.tolist()])
+			if self.crop is not None:
+				cx, cy = images.shape[-2]//2, images.shape[-1]//2
+				rx, ry = self.crop[0]//2, self.crop[1]//2
+				images = images[..., cx-rx:cx+rx, cy-ry:cy+ry]
+			if self.resize is not None:
+				images = F.interpolate(images.float(), size=self.resize, mode=self.resize_mode)
+			# images = images.continguous()
+			images = images.byte() if self.space.as_bytes \
+				else images.float().div(255).clamp(self._epsilon, 1-self._epsilon)
+			return images
+
+	#  TODO: setup download celeba
+
+	# # google drive ids
+	# _google_drive_ids = {
+	# 	'list_eval_partition.txt': '0B7EVK8r0v71pY0NSMzRuSXJEVkk',
+	# 	'identity_CelebA.txt': '1_ee_0u7vcNLOfNLegJRHmolfH5ICW-XS',
+	# 	'list_attr_celeba.txt': '0B7EVK8r0v71pblRyaVFSWGxPY0U',
+	# 	'list_bbox_celeba.txt': '0B7EVK8r0v71pbThiMVRxWXZ4dU0',
+	# 	'list_landmarks_align_celeba.txt': '0B7EVK8r0v71pd0FJY3Blby1HUTQ',
+	# }
+	# _google_drive_image_id = '0B7EVK8r0v71pZjFTYXZWM3FlRnM'
+	#
+	# @classmethod
+	# def download(cls, A, dataroot=None, **kwargs):
+	#
+	# 	raise NotImplementedError('Unfortunately, automatically downloading CelebA is current not supported.')
+	#
+	# 	dataroot = util.get_data_dir(A)
+	# 	dataroot = dataroot / 'celeba'
+	# 	dataroot.mkdir(exist_ok=True)
+	#
+	# 	prt.warning(
+	# 		'Downloading CelebA doesn\'t seem to work currently (issues with google drive), instead it must be downloaded manually:'
+	# 		'\n1. create a directory "celeba" in the local_data directory'
+	# 		'\n2. download "img_align_celeba.zip" into that directory'
+	# 		'\n3. download label files: {}'
+	# 		'\n4. extract "img_align_celeba.zip" to a directory "img_align_celeba"'.format(
+	# 			', '.join(f'"{c}"' for c in cls._google_drive_ids.keys())))
+	#
+	# 	raise NotImplementedError
+	#
+	# 	imgdir = dataroot / 'img_align_celeba'
+	#
+	# 	pbar = A.pull('pbar', None)
+	#
+	# 	util.download_file_from_google_drive('0B7EVK8r0v71pOXBhSUdJWU1MYUk', dataroot, pbar=pbar)
+	#
+	# 	for name, ID in cls._google_drive_ids.items():
+	# 		path = dataroot / name
+	# 		if not path.exists():
+	# 			util.download_file_from_google_drive(ID, dataroot, name, pbar=pbar)
+	#
+	# 	if not imgdir.is_dir():
+	#
+	# 		imgpath = dataroot / 'img_align_celeba.zip'
+	#
+	# 		# download zip
+	# 		if not imgpath.exists():
+	# 			imgpath = util.download_file_from_google_drive(cls._google_drive_image_id, dataroot, pbar=pbar)
+	#
+	# 		# extract zip
+	# 		imgdir.mkdir(exist_ok=True)
+	# 		with zipfile.ZipFile(str(imgpath), 'r') as zip_ref:
+	# 			zip_ref.extractall(str(imgdir))
+	#
+	# 	# os.remove(str(imgpath))
+	#
+	# 	raise NotImplementedError
 
 
 

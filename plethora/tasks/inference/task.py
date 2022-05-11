@@ -46,6 +46,8 @@ class DownstreamTask(Task):
 class InferenceTask(DownstreamTask):
 	train_score_key = 'train_score'
 
+	pbar = None
+	num_workers = None
 	num_samples = None
 	shuffle_split = True
 	eval_split = hparam(0.2)
@@ -71,7 +73,7 @@ class InferenceTask(DownstreamTask):
 
 	@hparam(cache=True, module=abstract.Estimator)
 	def estimator(self):
-		return self.builder(source=self.train_dataset)
+		return self.builder(source=self.train_dataset, pbar=self.pbar, num_workers=self.num_workers)
 
 
 	@hparam()#module=DataSource)
