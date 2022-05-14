@@ -32,10 +32,10 @@ class AbstractCountableData(base.AbstractData):
 
 
 	def __str__(self):
-		return f'{super().__str__()}[{self.size()}]'
+		return f'{super().__str__()}[{self.size}]'
 
 
-	def _size(self):
+	def _length(self):
 		raise NotImplementedError
 
 
@@ -44,16 +44,21 @@ class AbstractCountableData(base.AbstractData):
 			super().__init__('did you forget to provide a "default_len" in __init__?')
 
 
-	def size(self):
+	def length(self):
 		if self.is_ready:
-			return self._size()
+			return self._length()
 		if self._default_len is not None:
 			return self._default_len
 		raise self.UnknownCount()
 
 
+	@property
+	def size(self):
+		return self.length()
+
+
 	def __len__(self):
-		return self.size()
+		return self.length()
 
 
 	def _fingerprint_data(self):
@@ -71,16 +76,16 @@ class AbstractCountableDataView(AbstractCountableData, base.AbstractView):
 		self._default_len = None
 
 
-	def size(self, **kwargs):
+	def length(self, **kwargs):
 		if self.sel is not None:
 			return len(self.sel)
-		return super().size()
+		return super().length()
 
 
-	def _size(self, **kwargs):
+	def _length(self, **kwargs):
 		if self.source is None:
 			raise self.NoSource
-		return self.source.size(**kwargs)
+		return self.source.length(**kwargs)
 
 
 
@@ -89,9 +94,9 @@ class AbstractFixedBuffer(AbstractCountableData, base.AbstractBuffer): # fixed n
 		raise NotImplementedError
 
 
-	def size(self):
+	def length(self):
 		try:
-			return super().size()
+			return super().length()
 		except self.UnknownCount:
 			if self._waiting_update is not None:
 				return len(self._waiting_update)
@@ -170,7 +175,7 @@ class Buffer(AbstractFixedBuffer, DeviceContainer):
 		return self.data is not None
 
 
-	def _size(self):
+	def _length(self):
 		return len(self.data)
 
 
@@ -213,10 +218,10 @@ class RemoteBuffer(Buffer):
 		self.data = self.get(**kwargs)
 
 
-	def _size(self):
+	def _length(self):
 		if self.data is not None:
-			return super(RemoteBuffer, self)._size()
-		return super()._size()
+			return super(RemoteBuffer, self)._length()
+		return super()._length()
 
 
 	# TODO: shouldn't this override .get(), not just ._get()?
@@ -277,7 +282,7 @@ class HDFBuffer(RemoteBuffer):
 		super()._prepare_sel(sel=sel, **kwargs)
 
 
-	def _size(self):
+	def _length(self):
 		return self._shape[0] if self._selected is None else len(self._selected)
 
 

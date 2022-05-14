@@ -27,7 +27,7 @@ class AbstractGenerationTask(abstract.Generator, BatchedTask):
 
 	@agnosticmethod
 	def _generate_step(self, info):
-		info[self.generated_key] = self.sample(info.source.size(), gen=info.gen)
+		info[self.generated_key] = self.sample(info.source.size, gen=info.gen)
 		return info
 
 

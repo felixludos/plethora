@@ -2,6 +2,7 @@ import json
 import os
 from pathlib import Path
 import math
+from itertools import peekable
 from collections import OrderedDict
 import torch
 from omnibelt import unspecified_argument, duplicate_instance, md5, agnosticmethod
@@ -15,12 +16,71 @@ from .buffers import AbstractFixedBuffer, Buffer, BufferView, HDFBuffer, \
 
 
 class Batchable(base.AbstractData):
-	def get_iterator(self, infinite=False, **kwargs):
-		first = True
-		while first or infinite:
-			for sel in self.generate_selections(**kwargs):
-				yield self.create_batch(sel=sel)
-			first = False
+	class Progress:  # closest analogue to the DataLoader in Pytorch
+		# TODO: make this exportable and fingerprinted
+		def __init__(self, infinite=None, **kwargs):
+			super().__init__(**kwargs)
+			self.source = None
+			self._batch_counter = 0
+			self.infinite = infinite
+
+
+		@property
+		def batch_count(self):
+			return self._batch_counter
+
+
+		class Busy(Exception):
+			def __init__(self, obj):
+				super().__init__(f'{obj} has already started')
+				self.obj = obj
+
+
+		def __call__(self, source, infinite=None, **kwargs):
+			if self.source is not None:
+				# each Progress instance should only be used for iterating through data once
+				raise self.Busy(self)
+			self.source = source
+			if self.infinite is None:
+				self.infinite = infinite
+			self._sels_source = self._sels_iterator(infinite=infinite, **kwargs)
+			return self
+
+
+		def _generate_selections(self, **kwargs):
+			return self.source.generate_selections(**kwargs)
+
+
+		def _sels_iterator(self, **kwargs):
+			while True:
+				for sel in self._generate_selections(**kwargs):
+					yield sel
+				if not self.infinite:
+					break
+
+
+		def _create_batch(self, sel, **kwargs):
+			return self.source.create_batch(sel=sel, progress=self)
+
+
+		def new_batch(self):
+			batch = self._create_batch(next(self._sels_source))
+			self._batch_counter += 1
+			return batch
+
+
+		def __iter__(self):
+			return self
+
+
+		def __next__(self):
+			return self.new_batch()
+
+
+	def get_iterator(self, infinite=False, progress=None, **kwargs):
+		if progress is None:
+			progress = self.Progress()
+		return progress(self, infinite=infinite, **kwargs)
 
 
 	def __iter__(self):
@@ -44,37 +104,21 @@ class Batchable(base.AbstractData):
 
 
 	Batch = None
-	def create_batch(self, sel=None, **kwargs):
+	def create_batch(self, sel=None, progress=None, **kwargs):
 		if self.Batch is None:
 			raise self.NoBatch
-		return self.Batch(source=self, sel=sel, **kwargs)
-	
+		return self.Batch(source=self, sel=sel, progress=progress, **kwargs)
+
 
 
 class Epoched(AbstractCountableData, Batchable, Seeded): # TODO: check Seeded and Device integration
 	'''Batchable with a fixed total number of samples (implements __len__)'''
-	def __init__(self, batch_size=64, shuffle_batches=True, force_batch_size=True,
-	             # batch_device=None,
-	             infinite=False, **kwargs):
+	def __init__(self, batch_size=64, shuffle_batches=True, force_batch_size=True, infinite=False, **kwargs):
 		super().__init__(**kwargs)
-
 		self._batch_size = batch_size
 		self._force_batch_size = force_batch_size
 		self._shuffle_batches = shuffle_batches
-		# self._batch_device = batch_device
 		self._infinite = infinite
-
-
-	# def create_batch(self, sel=None, device=unspecified_argument, **kwargs):
-	# 	if device is unspecified_argument:
-	# 		device = self._batch_device
-	# 	return super().create_batch(sel=sel, device=device, **kwargs)
-
-
-	def get_batch(self, shuffle=None, **kwargs):
-		if shuffle is None:
-			shuffle = True
-		return next(self.get_iterator(shuffle=shuffle, **kwargs))
 
 
 	@property
@@ -97,79 +141,254 @@ class Epoched(AbstractCountableData, Batchable, Seeded): # TODO: check Seeded an
 			if cls._is_big_number(N) else torch.randperm(N, generator=gen)
 
 
-	def generate_selections(self, sel=None, num_samples=None, batch_size=None, shuffle=False,
-	                        force_batch_size=None, gen=None, **kwargs):
+	def generate_selections(self, sel=None, sample_limit=None, batch_size=None, shuffle=True,
+	                        strict_batch_size=None, gen=None, **kwargs):
 		if batch_size is None:
 			batch_size = self.batch_size
-		if force_batch_size is None:
-			force_batch_size = self._force_batch_size
+		if strict_batch_size is None:
+			strict_batch_size = self._force_batch_size
 		if gen is None:
 			gen = self.gen
 			
 		if sel is None:
-			sel = torch.arange(self.size())
+			sel = torch.arange(self.size)
 		if shuffle:
 			sel = sel[self.shuffle_indices(len(sel), gen=gen)]
 		order = sel
-		if num_samples is not None and len(order) > num_samples:
-			order = order[:max(num_samples, batch_size) if force_batch_size else num_samples]
+		if sample_limit is not None and len(order) > sample_limit:
+			order = order[:max(sample_limit, batch_size) if strict_batch_size else sample_limit]
 		inds = list(order.split(batch_size))
-		if force_batch_size and len(inds) and len(inds[-1]) != batch_size:
+		if strict_batch_size and len(inds) and len(inds[-1]) != batch_size:
 			inds.pop()
 		return inds
-	
 
-	def get_iterator(self, epochs=1, num_samples=None, num_batches=None, infinite=False, hard_limit=True,
-	                 batch_size=None, shuffle=None, force_batch_size=None, gen=None, sel=None,
-	                 pbar=None, pbar_samples=True, **kwargs):
+
+	class Progress(Batchable.Progress, Seeded): # closest analogue to the DataLoader in Pytorch
+		def __init__(self, batch_size=64, shuffle=True, strict_batch_size=True, pbar=None, pbar_samples=True, **kwargs):
+			super().__init__(**kwargs)
+			self._sample_counter = 0
+			self._epoch_counter = 0
+
+			self._epoch_seed = None
+			self._batch_idx = None
+
+			self.pbar = None
+			self._pbar_cls = pbar
+			self.pbar_samples = pbar_samples
+
+			# "default" defaults
+			self.batch_size = batch_size
+			self.shuffle = shuffle
+			self.strict_batch_size = True
+
+
+		@staticmethod
+		def compute_budget(dataset_size, samples_per_batch, strict_batch_size=True,
+		                   epochs=None, sample_limit=None, batch_limit=None, strict_limit=True):
+			if epochs is not None or sample_limit is not None or batch_limit is not None:
+				return None, None, None # infinite
+
+			samples_per_epoch = dataset_size - int(strict_batch_size) * (dataset_size % samples_per_batch)
+			batches_per_epoch = int(math.ceil(samples_per_epoch / samples_per_batch))
+
+			total_samples = None if epochs is None else samples_per_epoch * epochs
+			if batch_limit is not None:
+				total = (batch_limit % batches_per_epoch) * samples_per_batch \
+				                + (batch_limit // batches_per_epoch) * samples_per_epoch
+				if total_samples is None or total < total_samples:
+					total_samples = total
+			if sample_limit is not None:
+				total = samples_per_epoch * (sample_limit // samples_per_epoch)
+				remainder = sample_limit % samples_per_epoch
+				total += samples_per_batch * (remainder // samples_per_batch)
+				remainder = remainder % samples_per_batch
+				if not strict_limit:
+					total += remainder if not strict_batch_size else samples_per_batch
+				if total_samples is None or total < total_samples:
+					total_samples = total
+
+			full_epochs = total_samples // samples_per_epoch
+			remainder = total_samples % samples_per_epoch
+			total_batches = full_epochs * batches_per_epoch + (remainder // samples_per_batch) * samples_per_batch
+			remainder = remainder % samples_per_batch
+			if not strict_batch_size and remainder > 0:
+				total_batches += 1
+
+			return total_samples, total_batches, full_epochs
+
+
+		def __call__(self, source, epochs=None, sample_limit=None, batch_limit=None, infinite=None,
+	                 batch_size=None, shuffle=None, strict_batch_size=None, strict_limit=True,
+	                 gen=None, sel=None, pbar=unspecified_argument, pbar_samples=None, **kwargs):
+			if self.shuffle is None:
+				self.shuffle = shuffle
+			if self.batch_size is None:
+				self.batch_size = batch_size
+			if strict_batch_size is not None:
+				self.strict_batch_size = strict_batch_size
+			if epochs is None and sample_limit is None and batch_limit is None:
+				epochs = 1 # by default, iterate through a whole epoch
+
+			self.total_samples, self.total_batches, self.full_epochs = self.compute_budget(
+				dataset_size=source.size if sel is None else len(sel),
+				samples_per_batch=batch_size, strict_batch_size=strict_batch_size,
+				epochs=epochs, sample_limit=sample_limit, batch_limit=batch_limit,
+				strict_limit=strict_limit,
+			)
+
+			if pbar is unspecified_argument:
+				pbar = self._pbar_cls
+			if self.pbar_samples is None:
+				self.pbar_samples = pbar_samples
+			if self.pbar is not None:
+				self.pbar.close()
+			self.pbar = None if pbar is None \
+				else pbar(total=self.total_samples if pbar_samples else self.total_batches,
+				          unit='smpl' if pbar_samples else 'batch')
+
+			out = super().__call__(source, infinite=infinite, sel=sel, gen=gen, shuffle=shuffle,
+			                       batch_size=batch_size, strict_batch_size=strict_batch_size, **kwargs)
+			if self.infinite:
+				self.total_samples, self.total_batches, self.full_epochs = None, None, None
+			return out
+
+
+		def new_batch(self):
+			batch = super().new_batch()
+			self._sample_counter += batch.size
+			if self.pbar is not None:
+				self.pbar.update(batch.size if self._pbar_samples else 1)
+			# if self.callback is not None:
+			# 	out = self.callback(self, batch)
+			# 	if out is not None: # TODO: maybe clean up or include warnings somewhere (+ lots of docs)
+			# 		batch = out
+			return batch
+
+
+		def _generate_selections(self, **kwargs):
+			sels = self.source.generate_selections(**kwargs)
+			if self._batch_idx is not None:
+				sels = sels[self._batch_idx:]
+			return sels
+
+
+		def _sels_iterator(self, gen=None, **kwargs): # this function contains the actual loop
+			if gen is None:
+				gen = self.gen
+			while not self.done:
+				epoch_gen = self.create_rng(seed=self._epoch_seed, base_gen=gen)
+				self._epoch_seed = epoch_gen.initial_seed()
+				sels = self._generate_selections(sample_limit=self.total_samples, gen=epoch_gen, **kwargs)
+				if self._batch_idx is None:
+					self._batch_idx = 0
+				for sel in sels:
+					self._batch_idx += 1
+					yield sel
+				self._epoch_seed = None
+				self._batch_idx = None
+				if not self.infinite:
+					break
+			if self.pbar is not None:
+				self.pbar.close()
+
+
+		@property
+		def sample_count(self):
+			return self._sample_counter
+
+
+		@property
+		def current_epoch(self):
+			return self._epoch_counter
+
+
+		@property
+		def completed_epochs(self):
+			return self.current_epoch - 1
+
+
+		@property
+		def remaining_epochs(self):
+			if self.full_epochs is None:
+				return float('inf')
+			return self.full_epochs - self.current_epoch
+
+
+		@property
+		def remaining_samples(self):
+			if self.total_samples is None:
+				return float('inf')
+			return self.total_samples - self.sample_counter
+
+
+		@property
+		def remaining_batches(self):
+			if self.total_batches is None:
+				return float('inf')
+			return self.total_batches - self.batch_counter
+
+
+		@property
+		def done(self):
+			return self.remaining_samples <= 0 or self.remaining_batches <= 0
+
+
+	def get_iterator(self, epochs=None, sample_limit=None, batch_limit=None, infinite=None,
+	                 batch_size=None, shuffle=None, strict_batch_size=None, strict_limit=True,
+	                 gen=None, sel=None, pbar=unspecified_argument, pbar_samples=None, progress=None, **kwargs):
 		if batch_size is None:
 			batch_size = self.batch_size
-		if force_batch_size is None:
-			force_batch_size = self._force_batch_size
+		if strict_batch_size is None:
+			strict_batch_size = self._strict_batch_size
 		if shuffle is None:
 			shuffle = self._shuffle_batches
 		if gen is None:
 			gen = self.gen
-			
-		subsel = sel
 
-		N = self.size() if subsel is None else len(subsel)
-		samples_per_epoch = N - int(force_batch_size) * (N % batch_size)
-		batches_per_epoch = int(math.ceil(samples_per_epoch / batch_size))
-		if infinite is None:
-			total_samples = None
-		elif num_batches is not None:
-			total_samples = (num_batches % batches_per_epoch) * batch_size \
-			                + (num_batches // batches_per_epoch) * samples_per_epoch
-		elif num_samples is not None:
-			total_samples = samples_per_epoch * (num_samples // samples_per_epoch)
-			remainder = num_samples % samples_per_epoch
-			total_samples += batch_size * (remainder // batch_size)
-			remainder = remainder % batch_size
-			if not hard_limit or not force_batch_size:
-				total_samples += remainder
-		else:
-			total_samples = samples_per_epoch * epochs
-		if pbar is not None:
-			pbar = pbar(total=total_samples if pbar_samples else total_samples // batch_size,
-			            unit='smpl' if pbar_samples else 'batch')
+		return super().get_iterator(epochs=epochs, sample_limit=sample_limit, batch_limit=batch_limit,
+		                            infinite=infinite, batch_size=batch_size, shuffle=shuffle,
+		                            strict_batch_size=strict_batch_size, strict_limit=strict_limit, gen=gen, sel=sel,
+		                            pbar=pbar, pbar_samples=pbar_samples, progress=progress, **kwargs)
 			
-		while total_samples is None or total_samples > 0:
-			sels = self.generate_selections(sel=subsel, num_samples=total_samples, batch_size=batch_size,
-			                                shuffle=shuffle, force_batch_size=force_batch_size, gen=gen, **kwargs)
-			for sel in sels:
-				N = len(sel)
-				if total_samples is not None:
-					total_samples -= N
-					if hard_limit and total_samples < 0:
-						break
-				if pbar is not None:
-					pbar.update(N if pbar_samples else 1)
-				yield self.create_batch(sel=sel, pbar=pbar)
-				if total_samples is not None and total_samples <= 0:
-					break
-		if pbar is not None:
-			pbar.close()
+		# subsel = sel
+		#
+		# N = self.size if subsel is None else len(subsel)
+		# samples_per_epoch = N - int(force_batch_size) * (N % batch_size)
+		# batches_per_epoch = int(math.ceil(samples_per_epoch / batch_size))
+		# if infinite is None:
+		# 	total_samples = None
+		# elif num_batches is not None:
+		# 	total_samples = (num_batches % batches_per_epoch) * batch_size \
+		# 	                + (num_batches // batches_per_epoch) * samples_per_epoch
+		# elif num_samples is not None:
+		# 	total_samples = samples_per_epoch * (num_samples // samples_per_epoch)
+		# 	remainder = num_samples % samples_per_epoch
+		# 	total_samples += batch_size * (remainder // batch_size)
+		# 	remainder = remainder % batch_size
+		# 	if not hard_limit or not force_batch_size:
+		# 		total_samples += remainder
+		# else:
+		# 	total_samples = samples_per_epoch * epochs
+		# if pbar is not None:
+		# 	pbar = pbar(total=total_samples if pbar_samples else total_samples // batch_size,
+		# 	            unit='smpl' if pbar_samples else 'batch')
+		#
+		# while total_samples is None or total_samples > 0:
+		# 	sels = self.generate_selections(sel=subsel, sample_limit=total_samples, batch_size=batch_size,
+		# 	                                shuffle=shuffle, force_batch_size=force_batch_size, gen=gen, **kwargs)
+		# 	for sel in sels:
+		# 		N = len(sel)
+		# 		if total_samples is not None:
+		# 			total_samples -= N
+		# 			if hard_limit and total_samples < 0:
+		# 				break
+		# 		if pbar is not None:
+		# 			pbar.update(N if pbar_samples else 1)
+		# 		yield self.create_batch(sel=sel, pbar=pbar)
+		# 		if total_samples is not None and total_samples <= 0:
+		# 			break
+		# if pbar is not None:
+		# 	pbar.close()
 
 
 
@@ -512,14 +731,14 @@ class CountableView(AbstractCountableDataView, Epoched, SourceView):
 
 
 class CachedView(SourceView, base.Container):
-	def __init__(self, pbar=None, **kwargs):
+	def __init__(self, progress=None, **kwargs):
 		super().__init__(**kwargs)
-		self._pbar = pbar
+		self.progress = progress
 
 
-	def set_description(self, desc):
-		if self._pbar is not None:
-			self._pbar.set_description(desc)
+	# def set_description(self, desc):
+	# 	if self._progress is not None:
+	# 		self._progress.set_description(desc)
 
 
 	def is_cached(self, item):
@@ -603,8 +822,8 @@ class Subsetable(Epoched):
 
 	def subset(self, cut=None, sel=None, shuffle=False, hard_copy=True, gen=None):
 		if sel is None:
-			sel, _ = self._split_indices(indices=self.shuffle_indices(self.size(), gen=gen)
-			if shuffle else torch.arange(self.size()), cut=cut)
+			sel, _ = self._split_indices(indices=self.shuffle_indices(self.size, gen=gen)
+			if shuffle else torch.arange(self.size), cut=cut)
 		return self.create_view(sel=sel)
 
 
@@ -621,7 +840,7 @@ class Subsetable(Epoched):
 		names, cuts = zip(*sorted(named_cuts, key=lambda nr: (isinstance(nr[1], int), isinstance(nr[1], float),
 		                                                      nr[1] is None, nr[0]), reverse=True))
 
-		remaining = self.size()
+		remaining = self.size
 		nums = []
 		itr = iter(cuts)
 		for cut in itr:
@@ -648,7 +867,7 @@ class Subsetable(Epoched):
 		if remaining > 0:
 			nums[-1] += remaining
 
-		indices = self.shuffle_indices(self.size(), gen=gen) if shuffle else torch.arange(self.size())
+		indices = self.shuffle_indices(self.size, gen=gen) if shuffle else torch.arange(self.size)
 
 		plan = dict(zip(names, nums))
 		parts = {}
@@ -700,8 +919,8 @@ class Dataset(Subsetable, DataCollection):
 	# 	return data
 
 
-	def _size(self):
-		return next(iter(self.iter_buffers(True)))[1].size()
+	def _length(self):
+		return next(iter(self.iter_buffers(True)))[1].length()
 
 
 	def get_subset_src(self, recursive=True):
@@ -718,8 +937,8 @@ class Dataset(Subsetable, DataCollection):
 	def subset(self, cut=None, sel=None, shuffle=False, src_ref=True, hard_copy=True, gen=None):
 		if hard_copy:
 			if sel is None:
-				sel, _ = self._split_indices(indices=self.shuffle_indices(self.size(), gen=gen)
-				if shuffle else torch.arange(self.size()), cut=cut)
+				sel, _ = self._split_indices(indices=self.shuffle_indices(self.size, gen=gen)
+				if shuffle else torch.arange(self.size), cut=cut)
 			new = self.copy()
 			if src_ref:
 				new._subset_src = self

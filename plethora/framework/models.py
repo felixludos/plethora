@@ -1,10 +1,11 @@
 
 
 import torch
+from torch import nn
 from omnibelt import agnosticmethod, unspecified_argument#, mix_into
 from . import util
 from . import abstract
-from .features import Seeded
+from .features import Seeded, Prepared
 from .hyperparameters import Parametrized, ModuleParametrized, hparam, inherit_hparams
 from .base import Function, Container
 
@@ -170,8 +171,19 @@ class Fitable(Resultable):
 		raise NotImplementedError
 
 
+# from torch import nn
+#
+# class PModel(nn.Module):
+# 	def __init__(self):
+# 		super().__init__()
+# 		self.train()
+# 	pass
 
-class Model(Buildable, Fitable):
+
+class Model(Buildable, Fitable, Prepared):
+	def _prepare(self, source=None, **kwargs):
+		pass
+
 
 	@agnosticmethod
 	def create_fit_results_container(self, **kwargs):
@@ -179,6 +191,7 @@ class Model(Buildable, Fitable):
 
 
 	def fit(self, source, **kwargs):
+		self.prepare(source)
 		info = self.create_fit_results_container(source=source, **kwargs)
 		return self._fit(info)
 
@@ -189,6 +202,8 @@ class Model(Buildable, Fitable):
 
 
 	def evaluate(self, source, **kwargs):
+		if not self.is_ready:
+			raise self.NotReady
 		info = self.create_results_container(source=source, **kwargs)
 		return self._evaluate(info)
 
@@ -199,7 +214,7 @@ class Model(Buildable, Fitable):
 
 
 
-class Trainer(ModuleParametrized, Fitable):
+class Trainer(ModuleParametrized, Fitable, Prepared):
 	model = hparam(module=Model)
 
 	def __init__(self, model, source=None, **kwargs):
@@ -207,16 +222,13 @@ class Trainer(ModuleParametrized, Fitable):
 		self.source = source
 		self.model = model
 
-		self.N_iter = 0
-		self.N_samples = 0
+		self._num_iter = 0
 
 
 	def loop(self, source, **kwargs):
-		itr = source.get_iterator(**kwargs)
-		for batch in itr:
+		self.loader = source.get_iterator(**kwargs)
+		for batch in self.loader:
 			yield batch
-			self.N_iter += 1
-			self.N_samples += batch.size
 
 
 	@agnosticmethod
@@ -224,9 +236,14 @@ class Trainer(ModuleParametrized, Fitable):
 		return self.model.create_step_results_container(**kwargs)
 
 
+	def _prepare(self, source=None, **kwargs):
+		pass
+
+
 	def fit(self, source=None, **kwargs):
 		if source is None:
 			source = self.source
+		self.prepare(source=source)
 		for batch in self.loop(source, **kwargs):
 			info = self.step(batch)
 		return self.finish_fit(info)
@@ -241,11 +258,9 @@ class Trainer(ModuleParametrized, Fitable):
 
 	def step(self, source, **kwargs):
 		info = self.create_step_results_container(source=source, **kwargs)
-		return self._step(info)
-
-
-	def _step(self, info, **kwargs):
-		return self.model.step(info)
+		out = self.model.step(info)
+		self._num_iter += 1
+		return out
 
 
 	def finish_fit(self, info):
@@ -266,7 +281,7 @@ class TrainableModel(Model):
 	Trainer = Trainer
 	@agnosticmethod
 	def fit(self, source, info=None, **kwargs):
-		assert info is None, 'cant merge info'
+		assert info is None, 'cant merge info (yet)' # TODO
 		trainer = self.Trainer(self)
 		return trainer.fit(source=source, **kwargs)
 
@@ -280,6 +295,59 @@ class TrainableModel(Model):
 	@agnosticmethod
 	def _step(self, info):
 		raise NotImplementedError
+
+
+	@agnosticmethod
+	def eval_step(self, info, **kwargs):
+		self._step(info, **kwargs)
+		return info
+
+
+
+class PytorchModel(TrainableModel, nn.Module):
+	@agnosticmethod
+	def step(self, info, **kwargs):
+		if not self.training:
+			self.train()
+		return super().step(info, **kwargs)
+
+
+	@agnosticmethod
+	def eval_step(self, info, **kwargs):
+		if self.training:
+			self.eval()
+		with torch.no_grad():
+			return super().eval_step(info, **kwargs)
+
+
+
+class SimplePytorchModel(PytorchModel):
+	_loss_key = 'loss'
+
+	optimizer = hparam('optimizer', None)
+
+
+	def _prepare(self, source=None, **kwargs):
+		out = super()._prepare(source=source, **kwargs)
+		self.optimizer.prepare(self.parameters())
+		return out
+
+
+	def _compute_loss(self, info):
+		return info
+
+
+	def _step(self, info):
+		self._compute_loss(info)
+
+		if self.training:
+			loss = info[self._loss_key]
+
+			self.optimizer.zero_grad()
+			loss.backward()
+			self.optimizer.step()
+
+		return info
 
 
 

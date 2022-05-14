@@ -242,7 +242,8 @@ class Function(Fingerprinted):
 	
 
 
-class Container(OrderedDict):
+class Container(OrderedDict): # TODO: instead of inheriting from OrderedDict use Mapping (maybe?)
+							  # http://www.kr41.net/2016/03-23-dont_inherit_python_builtin_dict_type.html
 	def _find_missing(self, key):
 		raise KeyError(key)
 
