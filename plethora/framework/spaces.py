@@ -7,7 +7,7 @@ import torch
 from torch.nn import functional as F
 
 from .math import angle_diff, Metric, Lp, L2, L1
-from .random import Generator
+from .random import Sampler
 from .features import Fingerprinted
 # from .features import DeviceBase, Configurable
 
@@ -15,7 +15,7 @@ from .features import Fingerprinted
 # TODO: include dtypes
 
 
-class Dim(Packable, Metric, Generator, Fingerprinted):
+class Dim(Packable, Metric, Sampler, Fingerprinted):
 	def __init__(self, min=None, max=None, shape=(), dtype=None, **kwargs):
 		super().__init__(**kwargs)
 		self.shape = shape

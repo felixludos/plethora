@@ -1,7 +1,7 @@
 
 from . import util
 from . import abstract
-from .random import Seeded, Generator, gen_random_seed, gen_deterministic_seed, create_rng, using_rng
+from .random import Seeded, Sampler, gen_random_seed, gen_deterministic_seed, create_rng, using_rng
 from .features import Named, Device, Rooted, DeviceContainer, Fingerprinted
 from .math import angle_diff, round_sigfigs, sigfig_noise, mixing_score, Metric, Norm, Lp, L0, L1, L2, Linf
 from . import spaces

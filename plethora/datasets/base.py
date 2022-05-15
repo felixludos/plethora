@@ -2,14 +2,14 @@ import json
 import os
 from pathlib import Path
 import math
-from itertools import peekable
+# from itertools import peekable
 from collections import OrderedDict
 import torch
 from omnibelt import unspecified_argument, duplicate_instance, md5, agnosticmethod
 import h5py as hf
 
 from ..framework.features import Prepared, Fingerprinted
-from ..framework import base, Rooted, Named, util, Seeded, Generator, Metric
+from ..framework import base, Rooted, Named, util, Seeded, Sampler, Metric
 from .buffers import AbstractFixedBuffer, Buffer, BufferView, HDFBuffer, \
 	AbstractCountableData, AbstractCountableDataView, ReplacementBuffer
 
@@ -113,10 +113,10 @@ class Batchable(base.AbstractData):
 
 class Epoched(AbstractCountableData, Batchable, Seeded): # TODO: check Seeded and Device integration
 	'''Batchable with a fixed total number of samples (implements __len__)'''
-	def __init__(self, batch_size=64, shuffle_batches=True, force_batch_size=True, infinite=False, **kwargs):
+	def __init__(self, batch_size=64, shuffle_batches=True, strict_batch_size=True, infinite=False, **kwargs):
 		super().__init__(**kwargs)
 		self._batch_size = batch_size
-		self._force_batch_size = force_batch_size
+		self._strict_batch_size = strict_batch_size
 		self._shuffle_batches = shuffle_batches
 		self._infinite = infinite
 
@@ -257,12 +257,17 @@ class Epoched(AbstractCountableData, Batchable, Seeded): # TODO: check Seeded an
 			batch = super().new_batch()
 			self._sample_counter += batch.size
 			if self.pbar is not None:
-				self.pbar.update(batch.size if self._pbar_samples else 1)
+				self.pbar.update(batch.size if self.pbar_samples else 1)
 			# if self.callback is not None:
 			# 	out = self.callback(self, batch)
 			# 	if out is not None: # TODO: maybe clean up or include warnings somewhere (+ lots of docs)
 			# 		batch = out
 			return batch
+
+
+		def set_description(self, desc):
+			if self.pbar is not None:
+				self.pbar.set_description(desc)
 
 
 		def _generate_selections(self, **kwargs):
@@ -969,7 +974,7 @@ class SimpleDataset(Dataset):
 
 
 
-class GenerativeDataset(Dataset, Generator):
+class GenerativeDataset(Dataset, Sampler):
 	sample_key = None
 
 

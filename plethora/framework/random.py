@@ -113,7 +113,7 @@ def create_rng(seed=None, base_gen=None):
 
 
 
-class Generator(Seeded, abstract.Generator):
+class Sampler(Seeded, abstract.Generator):
 	def sample(self, *shape, gen=None, **kwargs):
 		if gen is None:
 			gen = self.gen

@@ -7,12 +7,12 @@ from torch.distributions import constraints
 
 from .util.tensors import SpaceTensor, WrappedTensor
 from .features import Device, Fingerprinted
-from .random import Generator
+from .random import Sampler
 
 
 # TODO: make exportable
 # TODO: add warnings for non-seeded functions like rsample()
-class Distribution(Generator, Fingerprinted, distrib.Distribution): # TODO: saving and loading distributions
+class Distribution(Sampler, Fingerprinted, distrib.Distribution): # TODO: saving and loading distributions
 	def __init__(self, params=None, apply_constraints=False, constraints=None, soft_constraints=False, **kwargs):
 		if params is None:
 			params = {key: kwargs[key] for key in self.arg_constraints if key in kwargs}
