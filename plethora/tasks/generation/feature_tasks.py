@@ -3,6 +3,10 @@ import torch
 from torch import nn
 import piq
 from piq import IS, FID, GS, KID, MSID, PR
+try:
+	from pytorch_fid import fid_score as backup_fid_score
+except ImportError:
+	backup_fid_score = None
 from piq import inception_score
 from piq.fid import _compute_statistics as compute_fid_stats, _compute_fid as compute_frechet_distance
 from ...framework import models, hparam, inherit_hparams
@@ -66,8 +70,16 @@ class FID_GenerationTask(FeatureGenerationTask):
 	
 	@staticmethod
 	def compute_frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6):
-		return compute_frechet_distance(mu1, sigma1, mu2, sigma2, eps=eps)
-	
+		score = compute_frechet_distance(mu1, sigma1, mu2, sigma2, eps=eps).item()
+		if score != score:
+			if backup_fid_score is not None:
+				score = backup_fid_score.calculate_frechet_distance(mu1.cpu().numpy(), sigma1.cpu().numpy(),
+				                                            mu2.cpu().numpy(), sigma2.cpu().numpy(), eps=eps).item()
+			else:
+				raise Exception('ERROR: FID calculation resulting in nan '
+				                '(use `pip install pytorch_fid` for an alternative method)')
+		return score
+
 	
 	@agnosticmethod
 	def _compare_features(self, info):
@@ -78,7 +90,7 @@ class FID_GenerationTask(FeatureGenerationTask):
 			'fake_fid_mu': fake_mu, 'fake_fid_cov': fake_cov,
 			'real_fid_mu': real_mu, 'real_fid_cov': real_cov,
 		})
-		score = self.compute_frechet_distance(fake_mu, fake_cov, real_mu, real_cov, eps=self._eps).item()
+		score = self.compute_frechet_distance(fake_mu, fake_cov, real_mu, real_cov, eps=self._eps)
 		info[self.score_key] = score
 		return info
 
