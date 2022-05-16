@@ -54,6 +54,11 @@ class AbstractScikitEstimator(Model, Function):
 		return {}
 
 
+	@agnosticmethod
+	def heavy_results(self):
+		return {'observation', *super().heavy_results()}
+
+
 	@staticmethod
 	def _format_scikit_arg(data):
 		if data is not None and isinstance(data, torch.Tensor):
@@ -85,6 +90,9 @@ class AbstractSupervised(AbstractScikitEstimator): # just a flag to unify wrappe
 	def prediction_methods(self):
 		return {'pred': self.predict}
 
+	@agnosticmethod
+	def heavy_results(self):
+		return {'target', 'pred', *super().heavy_results()}
 
 	def predict(self, observation, **kwargs):
 		return self._call_scikit_fn('predict', observation).view(observation.shape[0], -1)
@@ -144,6 +152,14 @@ class Regressor(AbstractSupervised):
 			target = dout.standardize(target)
 		return super()._fit(info, observation=observation, target=target)
 
+
+	@agnosticmethod
+	def heavy_results(self):
+		return {'errs', *super().heavy_results()}
+
+	@agnosticmethod
+	def score_names(self):
+		return {'mse', 'mxe', 'mae', 'medae', *super().score_names()}
 
 	def _evaluate(self, info):
 		dout = info.source.space_of('target')
@@ -205,6 +221,16 @@ class Classifier(AbstractSupervised):
 		methods['probs'] = self.predict_probs
 		return methods
 
+	@agnosticmethod
+	def heavy_results(self):
+		return {'probs', *super().heavy_results()}
+
+	@agnosticmethod
+	def score_names(self):
+		return {'accuracy', 'roc-auc', 'f1', 'precision', 'recall',
+		        'worst-roc-auc', 'worst-f1', 'worst-precision', 'worst-recall',
+		        *super().score_names()}
+
 
 	def _evaluate(self, info, **kwargs):
 		dout = info.source.space_of('target')
@@ -229,15 +255,15 @@ class Classifier(AbstractSupervised):
 			roc = metrics.roc_curve(target_, probs_)
 
 		info.update({
-			'roc-auc': auc.mean(),
-			'f1': fscore.mean(),
-			'precision': precision.mean(),
-			'recall': recall.mean(),
+			'roc-auc': auc.mean().item(),
+			'f1': fscore.mean().item(),
+			'precision': precision.mean().item(),
+			'recall': recall.mean().item(),
 
-			'worst-roc-auc': auc.min(),
-			'worst-f1': fscore.min(),
-			'worst-precision': precision.min(),
-			'worst-recall': recall.min(),
+			'worst-roc-auc': auc.min().item(),
+			'worst-f1': fscore.min().item(),
+			'worst-precision': precision.min().item(),
+			'worst-recall': recall.min().item(),
 
 			'full-roc-auc': auc,
 			'full-f1': fscore,
@@ -305,11 +331,18 @@ class ParallelEstimator(AbstractScikitEstimator):
 		info['individuals'] = infos
 		try:
 			scores = [i['score'] for i in infos]
-			info['score'] = np.mean(scores)
+			info['score'] = np.mean(scores).item()
 			# info['indivdiuals'] = infos
 		except KeyError:
 			pass
 		return info
+
+
+	def filter_heavy(self, info):
+		out = super().filter_heavy(info)
+		if 'individuals' in info:
+			out['individuals'] = [est.filter_heavy(inf) for est, inf in zip(self, info['individuals'])]
+		return out
 
 
 	def fit(self, source, **kwargs):

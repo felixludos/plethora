@@ -41,12 +41,15 @@ class Task(Computable): # TODO: specify random seed for reproducibility
 	
 	@agnosticmethod
 	def score_names(self):
-		return set() if self.score_key is None else {self.score_key}
+		scores = super().score_names()
+		if self.score_key is None:
+			scores.add(self.score_key)
+		return scores
 
 
-	@agnosticmethod
-	def heavy_results(self):
-		return set()
+	# @agnosticmethod
+	# def heavy_results(self):
+	# 	return set()
 
 
 	@agnosticmethod

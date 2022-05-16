@@ -85,6 +85,22 @@ class Resultable:
 
 
 	@agnosticmethod
+	def heavy_results(self):
+		return set()
+
+
+	@agnosticmethod
+	def score_names(self):
+		return set()
+
+
+	@agnosticmethod
+	def filter_heavy(self, info):
+		heavy = self.heavy_results()
+		return {key:val for key, val in info.items() if key not in heavy}
+
+
+	@agnosticmethod
 	def _integrate_results(self, info, **kwargs):
 		raise NotImplementedError # TODO
 		if not isinstance(info, self.ResultsContainer):

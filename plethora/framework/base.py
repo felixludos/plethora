@@ -5,6 +5,7 @@ from omnibelt import unspecified_argument, duplicate_instance
 
 from .random import Seeded
 from .features import Device, DeviceContainer, Prepared, Fingerprinted
+from .exporting import Exporter
 
 
 
@@ -261,8 +262,8 @@ class Container(OrderedDict): # TODO: instead of inheriting from OrderedDict use
 			# return val
 
 
-	def export(self):
-		raise NotImplementedError
+	# def export(self):
+	# 	raise NotImplementedError
 
 
 	def __str__(self):

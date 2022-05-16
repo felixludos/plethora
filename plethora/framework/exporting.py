@@ -1,12 +1,12 @@
 from omnibelt import agnosticmethod
-from omnibelt import Exportable as _Old_Exportable#, export, load_export
+from omnibelt import Exporter as _Old_Exporter#, export, load_export
 from omnibelt import exporting_common as _common
 
 from .features import Rooted
 
+# TODO: separate Exportable (custom export function) and Exporter (maybe?)
 
-
-class Exportable(_Old_Exportable, Rooted, create_table=True):
+class Exporter(_Old_Exporter, Rooted, create_table=True):
 	@agnosticmethod
 	def create_export_path(self, name, root=None, ext=None):
 		if root is None:
@@ -23,12 +23,12 @@ class Exportable(_Old_Exportable, Rooted, create_table=True):
 
 
 def export(obj, name=None, root=None, fmt=None, path=None, **kwargs):
-	return Exportable.export(obj, name=name, root=root, fmt=fmt, path=path, **kwargs)
+	return Exporter.export(obj, name=name, root=root, fmt=fmt, path=path, **kwargs)
 
 
 
 def load_export(name=None, root=None, fmt=None, path=None, **kwargs):
-	return Exportable.load_export(name=name, root=root, fmt=fmt, path=path, **kwargs)
+	return Exporter.load_export(name=name, root=root, fmt=fmt, path=path, **kwargs)
 
 
 
@@ -36,22 +36,22 @@ def load_export(name=None, root=None, fmt=None, path=None, **kwargs):
 #  to automatically "infer" the root. This involves replacing the old classes with modified children.
 
 _update_fmts = {}
-for fmt in _Old_Exportable._export_fmts_head:
+for fmt in _Old_Exporter._export_fmts_head:
 	if fmt not in _update_fmts:
-		_update_fmts[fmt] = type(fmt.__name__, (fmt, Exportable), {})
-for fmt in _Old_Exportable._export_fmts_tail:
+		_update_fmts[fmt] = type(fmt.__name__, (fmt, Exporter), {})
+for fmt in _Old_Exporter._export_fmts_tail:
 	if fmt not in _update_fmts:
-		_update_fmts[fmt] = type(fmt.__name__, (fmt, Exportable), {})
-for typ, fmt in _Old_Exportable._export_fmt_types.items():
+		_update_fmts[fmt] = type(fmt.__name__, (fmt, Exporter), {})
+for typ, fmt in _Old_Exporter._export_fmt_types.items():
 	if fmt not in _update_fmts:
-		_update_fmts[fmt] = type(fmt.__name__, (fmt, Exportable), {})
-for ext, fmt in _Old_Exportable._export_fmt_exts.items():
+		_update_fmts[fmt] = type(fmt.__name__, (fmt, Exporter), {})
+for ext, fmt in _Old_Exporter._export_fmt_exts.items():
 	if fmt not in _update_fmts:
-		_update_fmts[fmt] = type(fmt.__name__, (fmt, Exportable), {})
-Exportable._export_fmts_head = [_update_fmts[fmt] for fmt in _Old_Exportable._export_fmts_head]
-Exportable._export_fmts_tail = [_update_fmts[fmt] for fmt in _Old_Exportable._export_fmts_tail]
-Exportable._export_fmt_types = {typ: _update_fmts[fmt] for typ, fmt in _Old_Exportable._export_fmt_types.items()}
-Exportable._export_fmt_exts = {ext: _update_fmts[fmt] for ext, fmt in _Old_Exportable._export_fmt_exts.items()}
+		_update_fmts[fmt] = type(fmt.__name__, (fmt, Exporter), {})
+Exporter._export_fmts_head = [_update_fmts[fmt] for fmt in _Old_Exporter._export_fmts_head]
+Exporter._export_fmts_tail = [_update_fmts[fmt] for fmt in _Old_Exporter._export_fmts_tail]
+Exporter._export_fmt_types = {typ: _update_fmts[fmt] for typ, fmt in _Old_Exporter._export_fmt_types.items()}
+Exporter._export_fmt_exts = {ext: _update_fmts[fmt] for ext, fmt in _Old_Exporter._export_fmt_exts.items()}
 del _update_fmts
 
 
@@ -64,7 +64,7 @@ from PIL import Image
 
 
 
-class NumpyExport(Exportable, extensions='.npy'):
+class NumpyExport(Exporter, extensions='.npy'):
 	@staticmethod
 	def validate_export_obj(obj, **kwargs):
 		return isinstance(obj, np.ndarray)
@@ -77,7 +77,7 @@ class NumpyExport(Exportable, extensions='.npy'):
 
 
 
-class NpzExport(Exportable, extensions='.npz'):
+class NpzExport(Exporter, extensions='.npz'):
 	@staticmethod
 	def _load_export(path, src=None, auto_load=False, **kwargs):
 		obj = np.load(path, **kwargs)
@@ -91,7 +91,7 @@ class NpzExport(Exportable, extensions='.npz'):
 
 
 
-class PandasExport(Exportable, extensions='.csv', types=pd.DataFrame):
+class PandasExport(Exporter, extensions='.csv', types=pd.DataFrame):
 	@staticmethod
 	def _load_export(path, src=None, **kwargs):
 		return pd.read_csv(path, **kwargs)
@@ -101,7 +101,7 @@ class PandasExport(Exportable, extensions='.csv', types=pd.DataFrame):
 	
 	
 
-class ImageExport(Exportable, extensions='.png'):
+class ImageExport(Exporter, extensions='.png'):
 	@staticmethod
 	def validate_export_obj(obj, **kwargs):
 		return isinstance(obj, Image.Image)
@@ -135,7 +135,7 @@ class JpgExport(ImageExport, extensions='.jpg'):
 
 
 
-class HDFExport(Exportable, extensions=['.h5', '.hf', '.hdf']):
+class HDFExport(Exporter, extensions=['.h5', '.hf', '.hdf']):
 	@staticmethod
 	def _load_export(path, src=None, auto_load=False, mode='r', **kwargs):
 		f = hf.File(str(path), mode=mode, **kwargs)
@@ -157,7 +157,7 @@ class HDFExport(Exportable, extensions=['.h5', '.hf', '.hdf']):
 
 
 
-class DictExport(Exportable, extensions='', types=dict):
+class DictExport(Exporter, extensions='', types=dict):
 	@staticmethod
 	def validate_export_obj(obj, **kwargs):
 		return isinstance(obj, dict) and all(isinstance(key, str) for key in obj)
@@ -173,7 +173,7 @@ class DictExport(Exportable, extensions='', types=dict):
 
 
 
-class PytorchExport(Exportable, extensions=['.pt', '.pth.tar']):
+class PytorchExport(Exporter, extensions=['.pt', '.pth.tar']):
 	@staticmethod
 	def validate_export_obj(obj, **kwargs):
 		return True
@@ -183,8 +183,8 @@ class PytorchExport(Exportable, extensions=['.pt', '.pth.tar']):
 	@staticmethod
 	def _export_self(self, path, src=None, **kwargs):
 		return torch.save(self, path, **kwargs)
-Exportable._export_fmts_tail.remove(PytorchExport)
-Exportable._export_fmts_tail.insert(1, PytorchExport)
+Exporter._export_fmts_tail.remove(PytorchExport)
+Exporter._export_fmts_tail.insert(1, PytorchExport)
 
 
 

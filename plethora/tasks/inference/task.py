@@ -11,6 +11,8 @@ prt = get_printer(__file__)
 
 
 class DownstreamTask(Task):
+	pbar = None
+	auto_encode = True
 
 	encoder = hparam(default=None, module=abstract.Extractor)
 
@@ -28,8 +30,12 @@ class DownstreamTask(Task):
 		if encoder is None:
 			encoder = self.encoder
 		view = dataset.create_view()
-		view.register_buffer('observation', self.ObservationBuffer(encoder=encoder, max_batch_size=dataset.batch_size,
-		                                                     source=dataset.get_buffer('observation'),))
+		enc_buffer = self.ObservationBuffer(encoder=encoder, max_batch_size=dataset.batch_size,
+		                                                           pbar=self.pbar, pbar_desc='encoding observations',
+		                                                     source=dataset.get_buffer('observation'),)
+		if self.auto_encode:
+			enc_buffer.to_memory()
+		view.register_buffer('observation', enc_buffer)
 		return view
 
 
@@ -145,6 +151,11 @@ class InferenceTask(DownstreamTask):
 		if 'score' in out:
 			info[self.train_score_key] = out['score']
 		return info
+
+
+	@agnosticmethod
+	def filter_heavy(self, info):
+		return self.estimator.filter_heavy(super().filter_heavy(info))
 
 
 	@agnosticmethod

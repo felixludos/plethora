@@ -9,7 +9,7 @@ from . import base
 from .hyperparameters import Hyperparameter, Parametrized, ModuleParametrized, hparam, inherit_hparams
 # from .util import data_args
 # from .hyperparameters import Hyperparameter, Parametrized, hparam, inherit_hparams
-from .exporting import Exportable, export, load_export
+from .exporting import Exporter, export, load_export
 from .models import Encoder, Decoder, Generator, Discriminator, Criterion, Metric, Extractor, Interpolator, \
 	Estimator, Quantizer, Compressor, PathCriterion, Trainer
 # from .distributions import Distribution, DistributionTensor

@@ -124,6 +124,9 @@ class Epoched(AbstractCountableData, Batchable, Seeded): # TODO: check Seeded an
 	@property
 	def batch_size(self):
 		return self._batch_size
+	@batch_size.setter
+	def batch_size(self, batch_size):
+		self._batch_size = batch_size
 
 
 	@staticmethod
@@ -1307,12 +1310,14 @@ class EncodableDataset(ObservationDataset, RootedDataset):
 	
 	
 	class EncodedBuffer(BufferView):
-		def __init__(self, encoder=None, max_batch_size=64, **kwargs):
+		def __init__(self, encoder=None, max_batch_size=64, pbar=None, pbar_desc='encoding', **kwargs):
 			super().__init__(**kwargs)
 			# if encoder is not None and encoder_device is None:
 			# 	encoder_device = getattr(encoder, 'device', None)
 			# self._encoder_device = encoder_device
 			self.encoder = encoder
+			self.pbar = pbar
+			self.pbar_desc = pbar_desc
 			self.max_batch_size = max_batch_size
 			
 
@@ -1331,7 +1336,9 @@ class EncodableDataset(ObservationDataset, RootedDataset):
 			# device = observations.device
 			if len(observations) > self.max_batch_size:
 				samples = []
-				batches = observations.chunk(self.max_batch_size)
+				batches = observations.split(self.max_batch_size)
+				if self.pbar is not None:
+					batches = self.pbar(batches, desc=self.pbar_desc)
 				for batch in batches:
 					# with torch.no_grad():
 					# if self._encoder_device is not None:
