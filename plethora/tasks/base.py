@@ -95,10 +95,10 @@ class Task(Computable): # TODO: specify random seed for reproducibility
 
 
 class BatchedTask(Task):
-	num_samples = None
+	sample_limit = None
 	batch_size = None
-	force_batch_size = None
-	hard_sample_limit = None
+	strict_batch_size = False
+	strict_limit = True
 	pbar = None
 
 
@@ -108,8 +108,8 @@ class BatchedTask(Task):
 			yield info
 			return
 
-		itr = self.dataset.get_iterator(num_samples=self.num_samples, batch_size=self.batch_size, pbar=self.pbar,
-		                                force_batch_size=self.force_batch_size, hard_limit=self.hard_sample_limit,
+		itr = self.dataset.get_iterator(sample_limit=self.sample_limit, batch_size=self.batch_size, pbar=self.pbar,
+		                                strict_batch_size=self.strict_batch_size, strict_limit=self.strict_limit,
 		                                gen=info.gen)
 		for batch in itr:
 			info.new_source(batch)

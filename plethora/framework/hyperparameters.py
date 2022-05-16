@@ -285,8 +285,17 @@ class inherit_hparams:
 		self.kwargs = kwargs
 
 
+	class OwnerNotParametrized(Exception):
+		pass
+
+
 	def __call__(self, cls):
-		cls.inherit_hparams(*self.names, **self.kwargs)
+		try:
+			inherit_fn = cls.inherit_hparams
+		except AttributeError:
+			raise self.OwnerNotParametrized(f'{cls} must be a subclass of {Parametrized}')
+		else:
+			inherit_fn(*self.names, **self.kwargs)
 		return cls
 
 
@@ -322,6 +331,10 @@ class hparam:
 		return getattr(instance, self.name)
 
 
+	class OwnerNotParametrized(Exception):
+		pass
+
+
 	def __set_name__(self, obj, name):
 		if self.default is not unspecified_argument:
 			self.kwargs['default'] = self.default
@@ -330,8 +343,12 @@ class hparam:
 		self.kwargs['fset'] = getattr(self, 'fset', None)
 		self.kwargs['fdel'] = getattr(self, 'fdel', None)
 		self.name = name
-		setattr(obj, name, obj.register_hparam(name, **self.kwargs))
-
+		try:
+			reg_fn = obj.register_hparam
+		except AttributeError:
+			raise self.OwnerNotParametrized(f'{obj} must be a subclass of {Parametrized}')
+		else:
+			setattr(obj, name, reg_fn(name, **self.kwargs))
 
 
 

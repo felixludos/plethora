@@ -146,30 +146,30 @@ def _test_script(A):
 
 	# criterion = MSE()
 
-	task = tasks.InferenceTask(dataset=dataset, pbar=tqdm, num_samples=1000,
+	task = tasks.InferenceTask(dataset=dataset, pbar=tqdm, sample_limit=1000,
 	                           # num_workers=4,
 	                          encoder=enc)
 
 	# task = tasks.PR_GenerationTask(dataset=dataset, pbar=tqdm,
-	#                           num_samples=10000, batch_size=100,
+	#                           sample_limit=10000, batch_size=100,
 	#                           generator=dec, extractor=extractor)
 
 	# task = tasks.ReconstructionTask(dataset=dataset, pbar=tqdm, criterion_name='ms-ssim',
-	#                           num_samples=1000, batch_size=100,
+	#                           sample_limit=1000, batch_size=100,
 	#                           encoder=enc, decoder=dec)
 
-	# task = tasks.RoundingCompressionTask(dataset=dataset, pbar=tqdm, num_samples=1000, batch_size=100,
+	# task = tasks.RoundingCompressionTask(dataset=dataset, pbar=tqdm, sample_limit=1000, batch_size=100,
 	#                                      sigfigs=3, compressor_name='lzma',
 	#                                      encoder=enc, decoder=dec, criterion_name='ms-ssim')
 
-	# task = tasks.BitsBackCompressionTask(dataset=dataset, pbar=tqdm, num_samples=4, batch_size=2,
+	# task = tasks.BitsBackCompressionTask(dataset=dataset, pbar=tqdm, sample_limit=4, batch_size=2,
 	#                                      encoder=enc, decoder=dec, strict_verify=True)
 
-	# task = tasks.LosslessCompressionTask(dataset=dataset, pbar=tqdm, num_samples=1000, batch_size=100,
+	# task = tasks.LosslessCompressionTask(dataset=dataset, pbar=tqdm, sample_limit=1000, batch_size=100,
 	#                                      compressor_name='lzma')
 
 	# task = tasks.CorrelationMetricTask(dataset=dataset, pbar=tqdm, metric_name='l2',
-	#                           num_samples=1000, batch_size=100,
+	#                           sample_limit=1000, batch_size=100,
 	#                           encoder=enc)
 
 	with torch.no_grad():
@@ -240,7 +240,7 @@ def _test_script(A):
 	
 	dataset = toy.SwissRollDataset(10, noise=.1, seed=11).prepare()
 	
-	print(list(dataset.get_iterator(batch_size=4, num_samples=5, force_batch_size=False,
+	print(list(dataset.get_iterator(batch_size=4, sample_limit=5, force_batch_size=False,
                           hard_limit=False, )))
 	
 

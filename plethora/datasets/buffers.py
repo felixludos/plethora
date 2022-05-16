@@ -154,7 +154,7 @@ class Buffer(AbstractFixedBuffer, DeviceContainer):
 		if self.is_ready:
 			N = len(self)
 			sel = torch.randint(N, size=(min(5, N),), generator=torch.Generator().manual_seed(16283393149723337453))
-			data['data'] = self.get(sel).reshape(len(sel), -1).mean(-1).tolist()
+			data['data'] = self.get(sel).reshape(len(sel), -1).float().mean(-1).tolist()
 		return data
 	
 

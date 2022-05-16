@@ -3,6 +3,8 @@ from omnibelt import get_printer, unspecified_argument, agnosticmethod
 from ...framework import abstract, hparam, inherit_hparams
 from ..base import Task, BatchedTask, SimpleEvaluationTask, Cumulative
 
+from .inception import InceptionV3
+
 prt = get_printer(__file__)
 
 
@@ -62,9 +64,12 @@ class FeatureGenerationTask(AbstractGenerationTask):
 	fake_features_key = 'fake_features'
 	real_features_key = 'real_features'
 
-
+	inception_dim = hparam(2048) # for the default feature extractor (InceptionV3)
 	feature_criterion = hparam()
-	extractor = hparam(None, module=abstract.Extractor)
+	# extractor = hparam(None, module=abstract.Extractor)
+	@hparam(module=abstract.Extractor)
+	def extractor(self):
+		return InceptionV3(self.inception_dim, device='cuda' if torch.cuda.is_available() else 'cpu')
 
 
 	@agnosticmethod

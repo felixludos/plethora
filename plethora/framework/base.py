@@ -227,7 +227,7 @@ class Function(Fingerprinted):
 		data['din'] = self.fingerprint_obj(self.din)
 		data['dout'] = self.fingerprint_obj(self.dout)
 		if self.din is not None:
-			x = self.din.sample(4, generator=torch.Generator().manual_seed(16283393149723337453))
+			x = self.din.sample(4, gen=torch.Generator().manual_seed(16283393149723337453))
 			try:
 				with torch.no_grad():
 					y = self(x)

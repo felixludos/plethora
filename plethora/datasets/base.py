@@ -9,7 +9,7 @@ from omnibelt import unspecified_argument, duplicate_instance, md5, agnosticmeth
 import h5py as hf
 
 from ..framework.features import Prepared, Fingerprinted
-from ..framework import base, Rooted, Named, util, Seeded, Sampler, Metric
+from ..framework import base, Rooted, Named, util, Seeded, Sampler, abstract
 from .buffers import AbstractFixedBuffer, Buffer, BufferView, HDFBuffer, \
 	AbstractCountableData, AbstractCountableDataView, ReplacementBuffer
 
@@ -185,7 +185,7 @@ class Epoched(AbstractCountableData, Batchable, Seeded): # TODO: check Seeded an
 		@staticmethod
 		def compute_budget(dataset_size, samples_per_batch, strict_batch_size=True,
 		                   epochs=None, sample_limit=None, batch_limit=None, strict_limit=True):
-			if epochs is not None or sample_limit is not None or batch_limit is not None:
+			if epochs is None and sample_limit is None and batch_limit is None:
 				return None, None, None # infinite
 
 			samples_per_epoch = dataset_size - int(strict_batch_size) * (dataset_size % samples_per_batch)
@@ -202,14 +202,16 @@ class Epoched(AbstractCountableData, Batchable, Seeded): # TODO: check Seeded an
 				remainder = sample_limit % samples_per_epoch
 				total += samples_per_batch * (remainder // samples_per_batch)
 				remainder = remainder % samples_per_batch
-				if not strict_limit:
-					total += remainder if not strict_batch_size else samples_per_batch
+				if strict_limit and not strict_batch_size:
+					total += remainder
+				elif not strict_limit:
+					total += samples_per_batch
 				if total_samples is None or total < total_samples:
 					total_samples = total
 
 			full_epochs = total_samples // samples_per_epoch
 			remainder = total_samples % samples_per_epoch
-			total_batches = full_epochs * batches_per_epoch + (remainder // samples_per_batch) * samples_per_batch
+			total_batches = full_epochs * batches_per_epoch + remainder // samples_per_batch
 			remainder = remainder % samples_per_batch
 			if not strict_batch_size and remainder > 0:
 				total_batches += 1
@@ -243,8 +245,8 @@ class Epoched(AbstractCountableData, Batchable, Seeded): # TODO: check Seeded an
 			if self.pbar is not None:
 				self.pbar.close()
 			self.pbar = None if pbar is None \
-				else pbar(total=self.total_samples if pbar_samples else self.total_batches,
-				          unit='smpl' if pbar_samples else 'batch')
+				else pbar(total=self.total_samples if self.pbar_samples else self.total_batches,
+				          unit='smpl' if self.pbar_samples else 'batch')
 
 			out = super().__call__(source, infinite=infinite, sel=sel, gen=gen, shuffle=shuffle,
 			                       batch_size=batch_size, strict_batch_size=strict_batch_size, **kwargs)
@@ -323,14 +325,14 @@ class Epoched(AbstractCountableData, Batchable, Seeded): # TODO: check Seeded an
 		def remaining_samples(self):
 			if self.total_samples is None:
 				return float('inf')
-			return self.total_samples - self.sample_counter
+			return self.total_samples - self.sample_count
 
 
 		@property
 		def remaining_batches(self):
 			if self.total_batches is None:
 				return float('inf')
-			return self.total_batches - self.batch_counter
+			return self.total_batches - self.batch_count
 
 
 		@property
@@ -982,7 +984,7 @@ class GenerativeDataset(Dataset, Sampler):
 		if sample_key is unspecified_argument:
 			sample_key = self.sample_key
 		N = shape.numel()
-		batch = self.get_batch(shuffle=True, num_samples=N, batch_size=N, gen=gen)
+		batch = self.get_batch(shuffle=True, sample_limit=N, batch_size=N, gen=gen)
 		if self.sample_key is None:
 			return batch
 		return batch[sample_key].view(*shape, *self.space_of(sample_key).shape)
@@ -1020,7 +1022,7 @@ class ObservationDataset(_ObservationInfo, GenerativeDataset):
 
 
 
-class _SupervisionInfo(_ObservationInfo, Metric):
+class _SupervisionInfo(_ObservationInfo, abstract.Metric):
 	@property
 	def dout(self):
 		return self.target_space

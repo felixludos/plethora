@@ -48,7 +48,7 @@ class InferenceTask(DownstreamTask):
 
 	pbar = None
 	num_workers = None
-	num_samples = None
+	sample_limit = None
 	shuffle_split = True
 	eval_split = hparam(0.2)
 
@@ -60,8 +60,8 @@ class InferenceTask(DownstreamTask):
 
 	ObservationBuffer = EncodableDataset.EncodedBuffer
 	def _wrap_dataset(self, dataset, encoder=None):
-		if self.num_samples is not None:
-			dataset = dataset.subset(self.num_samples, shuffle=True)
+		if self.sample_limit is not None:
+			dataset = dataset.subset(self.sample_limit, shuffle=True)
 		return super()._wrap_dataset(dataset, encoder=encoder)
 
 

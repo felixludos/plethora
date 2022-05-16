@@ -57,6 +57,7 @@ class IS_GenerationTask(FeatureGenerationTask):
 class FID_GenerationTask(FeatureGenerationTask):
 	score_key = 'fid'
 	
+	_eps = 1e-6
 	
 	@staticmethod
 	def compute_fid_stats(features):
@@ -64,8 +65,8 @@ class FID_GenerationTask(FeatureGenerationTask):
 	
 	
 	@staticmethod
-	def compute_frechet_distance(mu1, sigma1, mu2, sigma2):
-		return compute_frechet_distance(mu1, sigma1, mu2, sigma2)
+	def compute_frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6):
+		return compute_frechet_distance(mu1, sigma1, mu2, sigma2, eps=eps)
 	
 	
 	@agnosticmethod
@@ -77,7 +78,7 @@ class FID_GenerationTask(FeatureGenerationTask):
 			'fake_fid_mu': fake_mu, 'fake_fid_cov': fake_cov,
 			'real_fid_mu': real_mu, 'real_fid_cov': real_cov,
 		})
-		score = self.compute_frechet_distance(fake_mu, fake_cov, real_mu, real_cov).item()
+		score = self.compute_frechet_distance(fake_mu, fake_cov, real_mu, real_cov, eps=self._eps).item()
 		info[self.score_key] = score
 		return info
 
