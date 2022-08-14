@@ -3,6 +3,7 @@
 import torch
 from torch import nn
 from omnibelt import agnosticmethod, unspecified_argument#, mix_into
+# import omnifig as fig
 from . import util
 from . import abstract
 from .features import Seeded, Prepared
@@ -161,6 +162,25 @@ class Buildable(ModuleParametrized): # TODO: unify building and hparams - they s
 
 
 
+# class ConfigParamed(fig.Configurable, ModuleParametrized):
+# 	def __init__(self, A, **kwargs):
+# 		super().__init__(A, **kwargs)
+# 		self._auto_config_hparam(A)
+#
+#
+# 	class Hyperparameter(ModuleParametrized.Hyperparameter):
+# 		def __init__(self, auto_config=True, **kwargs):
+# 			super().__init__(**kwargs)
+# 			self.auto_config = auto_config
+#
+#
+# 	def _auto_config_hparam(self, A):
+# 		for key, hparam in self.iterate_hparams(items=True):
+# 			if hparam.auto_config:
+# 				hparam.default = A.pull(key, hparam.default)
+
+
+
 class Computable(ModuleParametrized, Resultable):
 	@agnosticmethod
 	def compute(self, source=None, **kwargs):
@@ -196,7 +216,8 @@ class Fitable(Resultable):
 # 	pass
 
 
-class Model(Buildable, Fitable, Prepared):
+class Model(#Buildable,
+            Fitable, Prepared):
 	def _prepare(self, source=None, **kwargs):
 		pass
 
@@ -227,6 +248,11 @@ class Model(Buildable, Fitable, Prepared):
 	@staticmethod
 	def _evaluate(info):
 		raise NotImplementedError
+
+
+
+# class ConfigModel(ConfigParamed, Model):
+# 	pass
 
 
 

@@ -1,7 +1,7 @@
 import inspect
 
 import logging
-from omnibelt import unspecified_argument, agnosticmethod, classdescriptor, ClassDescriptable
+from omnibelt import unspecified_argument, agnosticmethod, classdescriptor, ClassDescriptable, OrderedSet
 
 from . import spaces
 
@@ -184,10 +184,16 @@ class Hyperparameter(property, classdescriptor):
 
 
 class Parametrized(metaclass=ClassDescriptable):
-	_inherited_hparams = set()
+	_registered_hparams = OrderedSet()
+	
+	
+	def __init_subclass__(cls, **kwargs):
+		super().__init_subclass__(**kwargs)
+		cls._registered_hparams = OrderedSet()
+
 
 	def __init__(self, *args, **kwargs):
-		self._inherited_hparams = self._inherited_hparams.copy()
+		self._registered_hparams = self._registered_hparams.copy()
 		super().__init__(*args, **self._extract_hparams(kwargs))
 
 
@@ -207,6 +213,8 @@ class Parametrized(metaclass=ClassDescriptable):
 	Hyperparameter = Hyperparameter
 	@agnosticmethod
 	def register_hparam(self, name=None, fget=None, default=unspecified_argument, required=False, **kwargs):
+		assert name is not None
+		self._registered_hparams.add(name)
 		return self.Hyperparameter(fget=fget, required=required, default=default, name=name, **kwargs)
 
 
@@ -221,13 +229,13 @@ class Parametrized(metaclass=ClassDescriptable):
 
 	@agnosticmethod
 	def iterate_hparams(self, items=False, **kwargs):
-		cls = self if isinstance(self, type) else self.__class__
+		# cls = self if isinstance(self, type) else self.__class__
 		done = set()
-		for key, val in cls.__dict__.items():
-			if key not in done and isinstance(val, Hyperparameter):
-				done.add(key)
-				yield (key, val) if items else key
-		for key in self._inherited_hparams:
+		# for key, val in cls.__dict__.items():
+		# 	if key not in done and isinstance(val, Hyperparameter):
+		# 		done.add(key)
+		# 		yield (key, val) if items else key
+		for key in self._registered_hparams:
 			# val = getattr(self, key, unspecified_argument) if getvalue else
 			val = inspect.getattr_static(self, key, unspecified_argument)
 			# val = getattr(self, key, None)
@@ -241,7 +249,7 @@ class Parametrized(metaclass=ClassDescriptable):
 
 	@agnosticmethod
 	def inherit_hparams(self, *names):
-		self._inherited_hparams.update(names)
+		self._registered_hparams.update(names)
 		# for name in names:
 		# 	hparam = inspect.getattr_static(self, name, unspecified_argument)
 		# 	if hparam is unspecified_argument:
